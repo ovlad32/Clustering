@@ -1,0 +1,8 @@
+bin/
+lib/
+*.files/
+.settings/
+*.jar
+*.html
+*.htm
+*.xls
