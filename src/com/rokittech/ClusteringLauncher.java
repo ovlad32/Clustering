@@ -97,10 +97,10 @@ public class ClusteringLauncher {
 			+ " and (lr.id < l.id or lr.id is null)\n" + " order by 1 asc";
 
 	
-	private static final String deleteSameConfidenceColumn =
-			"delete from link_column_same_bs where workflow_id = ? ";
+	private static final String deleteSameConfidenceColumnGroups =
+			"delete from link_column_same_bs where workflow_id = ? and scope='SAME_BS'";
 	
-	private static final String insertSameConfidenceColumn =
+	private static final String insertSameConfidenceColumnGroups =
 	    "insert into link_column_same_bs(workflow_id,scope,parent_column_info_id,child_column_info_id) "+
 		"select l.workflow_id, "+
 		"       'SAME_BS', "+
@@ -140,7 +140,38 @@ public class ClusteringLauncher {
 		"	and l.parent_db_name = src.parent_db_name "+
 		"	and l.workflow_id = src.workflow_id ";
 
-	  
+
+	static final String reportAllColumnPairsQuery = 
+	 "select distinct " +
+   	 "   l.parent_db_name, " +
+   	 "   l.parent_schema_name, " +
+   	 "   l.parent_table_name," +
+   	 "   l.parent_name," +
+   	 "   l.child_db_name," +
+   	 "   l.child_schema_name," +
+   	 "   l.child_table_name," +
+   	 "   l.child_name," +
+   	 "   l.BIT_SET_EXACT_SIMILARITY," +
+   	 "   l.LUCINE_SAMPLE_TERM_SIMILARITY," +
+   	 "   lr.BIT_SET_EXACT_SIMILARITY," +
+   	 "   lr.LUCINE_SAMPLE_TERM_SIMILARITY," +
+     "   bs.group_num," +
+     "   case when cp.HASH_UNIQUE_COUNT = cc.HASH_UNIQUE_COUNT then 'x' end as unique_same" +  
+	  " from link l" +
+	  " inner join column_info cp on cp.id = l.PARENT_COLUMN_INFO_ID" +
+	  " inner join column_info cc on cc.id = l.CHILD_COLUMN_INFO_ID" +
+	  " left outer join link_column_group bs" +
+	  "   on bs.scope = 'SAME_BS'" +
+	  "  and bs.workflow_id = l.workflow_id" +
+	  "  and bs.parent_column_info_id = l.parent_column_info_id" + 
+	  "  and bs.child_column_info_id = l.child_column_info_id " +
+	  " left outer join link lr" +
+	  "   on lr.workflow_id = l.workflow_id" +
+	  "  and lr.parent_column_info_id = l.parent_column_info_id" + 
+	  "  and lr.child_column_info_id = l.child_column_info_id " +
+	  " where l.workflow_id = ?   ";
+
+
 	private static void initH2(String url, String uid, String password) throws SQLException, RuntimeException,
 			InstantiationException, IllegalAccessException, ClassNotFoundException {
 		Driver driver = (Driver) Class.forName("org.h2.Driver").newInstance();
@@ -493,7 +524,8 @@ public class ClusteringLauncher {
 			st.setLong(1, workflowId);
 			st.setString(2, clusterLabel);
 
-			try (ResultSet rs = st.executeQuery(); HTMLFileWriter out = new HTMLFileWriter(outFile)) {
+			try (ResultSet rs = st.executeQuery(); 
+					HTMLFileWriter out = new HTMLFileWriter(outFile)) {
 				while (rs.next()) {
 					rowCount++;
 
@@ -507,19 +539,6 @@ public class ClusteringLauncher {
 						out.write("</HEADER>");
 						out.write("<BODY>");
 						out.write("<TABLE BORDER>");
-						/*out.write("<col width=61 style='mso-width-source:userset;mso-width-alt:2230;width:46pt'>"+
-						 "<col width=107 style='mso-width-source:userset;mso-width-alt:3913;width:80pt'>"+
-						 "<col width=138 style='mso-width-source:userset;mso-width-alt:5046;width:104pt'>"+
-						 "<col width=155 style='mso-width-source:userset;mso-width-alt:5668;width:116pt'>"+
-						 "<col width=179 style='mso-width-source:userset;mso-width-alt:6546;width:134pt'>"+
-						 "<col width=151 style='mso-width-source:userset;mso-width-alt:5522;width:113pt'>"+
-						 "<col width=129 style='mso-width-source:userset;mso-width-alt:4717;width:97pt'>"+
-						 "<col width=113 style='mso-width-source:userset;mso-width-alt:4132;width:85pt'>"+
-						 "<col width=171 style='mso-width-source:userset;mso-width-alt:6253;width:128pt'>"+
-						 "<col width=102 style='mso-width-source:userset;mso-width-alt:3730;width:77pt'>"+
-						 "<col width=83 style='mso-width-source:userset;mso-width-alt:3035;width:62pt'>"+
-						 "<col width=112 style='mso-width-source:userset;mso-width-alt:4096;width:84pt'>"+
-						 "<col width=126 style='mso-width-source:userset;mso-width-alt:4608;width:95pt'>");*/
 						out.write("<col width=50>"+
 						 "<col width=100>"+
 						 "<col width=128>"+
@@ -605,7 +624,51 @@ public class ClusteringLauncher {
 		}
 		System.out.printf("Report has been successfuly written to file %f",outFile);
 	}
+    
+	private static void reportPairs(Long workflowId, String outFile) 
+		throws SQLException, IOException {
+			Locale.setDefault(Locale.US);
 
+			if (workflowId == null) {
+				throw new RuntimeException("Error: Workflow ID has not been specified!");
+			}
+
+			if (outFile == null || outFile.isEmpty()) {
+				throw new RuntimeException("Error: Output file has not been specified!");
+			}
+			execSQL(columnGroupTableDefinintion);
+			
+			try(PreparedStatement ps = conn.prepareStatement(deleteSameConfidenceColumnGroups)){
+				ps.setLong(1, workflowId);
+				ps.executeUpdate();
+				conn.commit();
+			}
+			
+			try(PreparedStatement ps = conn.prepareStatement(insertSameConfidenceColumnGroups)){
+				ps.setLong(1, workflowId);
+				ps.executeUpdate();
+				conn.commit();
+			}
+			
+			try(PreparedStatement ps = conn.prepareStatement(reportAllColumnPairsQuery)) {
+				ps.setLong(1, workflowId);
+				int counter = 0;
+				try (ResultSet rs = ps.executeQuery();
+						HTMLFileWriter out = new HTMLFileWriter(outFile)) {
+					while(rs.next()) {
+						counter++;
+						if (counter == 1) {
+							//TODO:NEED TO BE CONTINUED
+						}
+						
+					}
+				}
+			}
+			
+			
+
+	}
+	
 /*
  drop table link_column_same_bs;
 create table if not exists link_column_group(
@@ -720,7 +783,9 @@ select *
  from link l
  left outer join back b on p_id = l.parent_column_info_id and c_id = l.child_column_info_id
  
- * */
+ */
+	
+	
 	static class HTMLFileWriter extends FileWriter {
 
 		static final String nbsp = "&nbsp;";
