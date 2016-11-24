@@ -80,13 +80,24 @@ public class ClusteringLauncher {
 	static final String insertClusteredColumnParam = "insert into link_clustered_column_param(workflow_id,cluster_label,bitset_level,lucene_level) \n"
 			+ " values(?,?,?,?)";
 
-	static final String reportClusteredColumnsQuery = " select distinct\n" + "    c.cluster_no,\n" +
-			// " l.id,lr.id,\n" +
-			"     l.parent_db_name,\n" + "     l.parent_schema_name,\n" + "     l.parent_table_name,\n"
-			+ "     l.parent_name,\n" + "     l.child_db_name,\n" + "     l.child_schema_name,\n"
-			+ "     l.child_table_name,\n" + "     l.child_name,\n" + "     l.bit_set_exact_similarity,\n"
-			+ "     l.lucine_sample_term_similarity,\n" + "     lr.bit_set_exact_similarity,\n"
-			+ "     lr.lucine_sample_term_similarity\n" + "   from link_clustered_column_param p\n"
+	static final String reportClusteredColumnsQuery = " select distinct\n" 
+	        + "    c.cluster_no\n" 
+			//+ " ,l.id,lr.id\n" 
+			+ "     ,l.parent_db_name \n" 
+			+ "     ,l.parent_schema_name \n" 
+			+ "     ,l.parent_table_name \n"
+			+ "     ,l.parent_name \n"  
+			+ "     ,l.child_db_name \n" 
+			+ "     ,l.child_schema_name \n"
+			+ "     ,l.child_table_name \n" 
+			+ "     ,l.child_name \n" 
+			+ "     ,l.bit_set_exact_similarity \n"
+			+ "     ,l.lucine_sample_term_similarity \n" 
+			+ "     ,lr.bit_set_exact_similarity \n"
+			+ "     ,lr.lucine_sample_term_similarity\n"  
+			+ "     ,p.bitset_level\n"  
+			+ "     ,p.lucene_level\n"  
+			+ "   from link_clustered_column_param p\n"
 			+ "     inner join link_clustered_column c on p.workflow_id = c.workflow_id and p.cluster_label = c.cluster_label\n"
 			+ "     inner join link l on c.column_info_id in (l.parent_column_info_id,l.child_column_info_id)\n"
 			+ "     left outer join link lr\n" + "       on lr.parent_column_info_id = l.child_column_info_id\n"
@@ -98,10 +109,10 @@ public class ClusteringLauncher {
 
 	
 	private static final String deleteSameConfidenceColumnGroups =
-			"delete from link_column_same_bs where workflow_id = ? and scope='SAME_BS'";
+			"delete from link_column_group where workflow_id = ? and scope='SAME_BS'";
 	
 	private static final String insertSameConfidenceColumnGroups =
-	    "insert into link_column_same_bs(workflow_id,scope,parent_column_info_id,child_column_info_id) "+
+	    "insert into link_column_group(workflow_id, scope, parent_column_info_id, child_column_info_id,group_num) "+
 		"select l.workflow_id, "+
 		"       'SAME_BS', "+
 		"       l.parent_column_info_id, "+
@@ -143,20 +154,22 @@ public class ClusteringLauncher {
 
 	static final String reportAllColumnPairsQuery = 
 	 "select distinct " +
-   	 "   l.parent_db_name, " +
-   	 "   l.parent_schema_name, " +
-   	 "   l.parent_table_name," +
-   	 "   l.parent_name," +
-   	 "   l.child_db_name," +
-   	 "   l.child_schema_name," +
-   	 "   l.child_table_name," +
-   	 "   l.child_name," +
-   	 "   l.BIT_SET_EXACT_SIMILARITY," +
-   	 "   l.LUCINE_SAMPLE_TERM_SIMILARITY," +
-   	 "   lr.BIT_SET_EXACT_SIMILARITY," +
-   	 "   lr.LUCINE_SAMPLE_TERM_SIMILARITY," +
-     "   bs.group_num," +
-     "   case when cp.HASH_UNIQUE_COUNT = cc.HASH_UNIQUE_COUNT then 'x' end as unique_same" +  
+   	 "   l.parent_db_name " +
+   	 "   ,l.parent_schema_name " +
+   	 "   ,l.parent_table_name" +
+   	 "   ,l.parent_name" +
+   	 "   ,l.child_db_name" +
+   	 "   ,l.child_schema_name" +
+   	 "   ,l.child_table_name " +
+   	 "   ,l.child_name " +
+   	 "   ,l.BIT_SET_EXACT_SIMILARITY " +
+   	 "   ,l.LUCINE_SAMPLE_TERM_SIMILARITY " +
+   	 "   ,lr.BIT_SET_EXACT_SIMILARITY " +
+   	 "   ,lr.LUCINE_SAMPLE_TERM_SIMILARITY " +
+     "   ,bs.group_num " +
+     "   ,case when cp.HASH_UNIQUE_COUNT = cc.HASH_UNIQUE_COUNT then 'x' end as unique_same" +  
+     "   ,l.id " +  
+     "   ,lr.id " +  
 	  " from link l" +
 	  " inner join column_info cp on cp.id = l.PARENT_COLUMN_INFO_ID" +
 	  " inner join column_info cc on cc.id = l.CHILD_COLUMN_INFO_ID" +
@@ -167,9 +180,13 @@ public class ClusteringLauncher {
 	  "  and bs.child_column_info_id = l.child_column_info_id " +
 	  " left outer join link lr" +
 	  "   on lr.workflow_id = l.workflow_id" +
-	  "  and lr.parent_column_info_id = l.parent_column_info_id" + 
-	  "  and lr.child_column_info_id = l.child_column_info_id " +
-	  " where l.workflow_id = ?   ";
+	  "  and lr.child_column_info_id = l.parent_column_info_id" + 
+	  "  and lr.parent_column_info_id = l.child_column_info_id " +
+	  " where l.workflow_id = ?   " +
+      "  and (lr.id<l.id or lr.id is null) "+
+	  "  order by "+
+	  "  l.parent_db_name,l.parent_schema_name,l.parent_table_name, " +
+	  "  l.child_db_name,l.child_schema_name,l.child_table_name, group_num";
 
 
 	private static void initH2(String url, String uid, String password) throws SQLException, RuntimeException,
@@ -244,7 +261,9 @@ public class ClusteringLauncher {
 				}
 				System.out.println("Done.");
 			} else if ("a".equals(command)) {
-				
+				initH2(parsedArgs.getProperty("url"), parsedArgs.getProperty("uid"), parsedArgs.getProperty("pwd"));
+				reportAllCoumnPairs(longOf(parsedArgs.getProperty("wid")),
+						parsedArgs.getProperty("outfile"));
 				System.out.println("Done.");
 			} else if ("d".equals(command)) {
 				initH2(parsedArgs.getProperty("url"), parsedArgs.getProperty("uid"), parsedArgs.getProperty("pwd"));
@@ -499,7 +518,7 @@ public class ClusteringLauncher {
 			}
 		}
 		
-		System.out.printf("Clusters have been successfuly created. Number of clusters is %d",clusterNo);
+		System.out.printf("Clusters have been successfuly created.\nNumber of clusters %d\n",clusterNo);
 
 		conn.commit();
 	}
@@ -538,6 +557,12 @@ public class ClusteringLauncher {
 						out.write("</STYLE>");
 						out.write("</HEADER>");
 						out.write("<BODY>");
+						out.write("<P style='font-weight:bold;'>");
+						out.write("Workflow ID: "); out.text(String.valueOf(workflowId));
+						out.write("; Label: ");		out.text(clusterLabel);
+						out.write("; Bitset Confidence Level: ");		out.textf("%f",rs.getObject(14));
+						out.write("; Lucene Confidence Level: ");		out.textf("%f",rs.getObject(15));
+						out.write(";</P>");
 						out.write("<TABLE BORDER>");
 						out.write("<col width=50>"+
 						 "<col width=100>"+
@@ -622,10 +647,10 @@ public class ClusteringLauncher {
 			}
 
 		}
-		System.out.printf("Report has been successfuly written to file %f",outFile);
+		System.out.printf("Report has been successfuly written to file %s \n",outFile);
 	}
     
-	private static void reportPairs(Long workflowId, String outFile) 
+	private static void reportAllCoumnPairs(Long workflowId, String outFile) 
 		throws SQLException, IOException {
 			Locale.setDefault(Locale.US);
 
@@ -658,132 +683,124 @@ public class ClusteringLauncher {
 					while(rs.next()) {
 						counter++;
 						if (counter == 1) {
-							//TODO:NEED TO BE CONTINUED
+							out.write("<HTML>");
+							out.write("<HEADER>");
+							out.write("<meta http-equiv=Content-Type content='text/html; charset=UTF-8'>");
+							out.write("<STYLE>");
+							out.write(".confidence {mso-number-format:\"0\\.00000\";text-align:right;}");
+							out.write(".integer {mso-number-format:\"0\";text-align:right;}");
+							out.write("</STYLE>");
+							out.write("</HEADER>");
+							out.write("<BODY>");
+							out.write("<P style='font-weight:bold;'> Workflow ID: ");
+							out.write(String.valueOf(workflowId));
+							out.write("</P>");
+							out.write("<TABLE BORDER>");
+							out.write(""+
+							 "<col width=100>"+
+							 "<col width=128>"+
+							 "<col width=150>"+
+							 "<col width=175>"+
+							 "<col width=100>"+
+							 "<col width=120>"+
+							 "<col width=150>"+
+							 "<col width=175>"+
+							 "<col width=100>"+
+							 "<col width=100>"+
+							 "<col width=100>"+
+							 "<col width=100>"+
+							 "<col width=100>"+
+							 "<col width=100>"+
+							 "<col width=50>"+
+							 "<col width=50>"+
+							 "");
+							
+							out.write("<TR height=49 width=61 style='height:36.75pt;width:46pt'>");
+							out.element("TH", "Parent DB name");
+							out.element("TH", "Parent schema name");
+							out.element("TH", "Parent table name");
+							out.element("TH", "Parent column name");
+							out.element("TH", "Child DB name");
+							out.element("TH", "Child schema name");
+							out.element("TH", "Child table name");
+							out.element("TH", "Child column name");
+
+							out.element("TH", "Bitset confidence");
+							out.element("TH", "Lucene confidence");
+							out.element("TH", "Reversal Bitset confidence");
+							out.element("TH", "Reversal Lucene confidence");
+							
+							out.element("TH", "Bitset group");
+							out.element("TH", "Distinct count");
+							
+							out.element("TH", "Link ID");
+							out.element("TH", "Reversal Link ID");
+
+							out.write("</TR>");
 						}
 						
+						out.write("<TR>");
+
+						// parent_db_name
+						out.element("TD", rs.getString(1));
+
+						// parent_schema_name
+						out.element("TD", rs.getString(2));
+
+						// parent_table_name
+						out.element("TD", rs.getString(3));
+
+						// parent_column_name
+						out.element("TD", rs.getString(4));
+
+						// child_db_name
+						out.element("TD", rs.getString(5));
+
+						// child_schema_name
+						out.element("TD", rs.getString(6));
+
+						// child_table_name
+						out.element("TD", rs.getString(7));
+
+						// child_column_name
+						out.element("TD", rs.getString(8));
+
+						// bit_set_exact_similarity
+						out.elementf("TD","class='confidence'", "%f", rs.getObject(9));
+
+						// lucine_sample_term_similarity
+						out.elementf("TD","class='confidence'", "%f"	, rs.getObject(10));
+
+						// rev_bit_set_exact_similarity
+						out.elementf("TD","class='confidence'", "%f", rs.getObject(11));
+
+						// rev_lucine_sample_term_similarity
+						out.elementf("TD","class='confidence'", "%f", rs.getObject(12));
+
+
+						// Bitset group
+						out.elementf("TD","class='integer'", "%d", rs.getObject(13));
+
+						// Distict count
+						out.element("TD", "style='text-align:center;'",rs.getString(14));
+
+						//Link Id
+						out.elementf("TD","class='integer'", "%d", rs.getObject(15));
+						//Reversal Link Id
+						out.elementf("TD","class='integer'", "%d", rs.getObject(16));
+
+						out.write("</TR>");
+
 					}
+					out.write("</TABLE>");
+					out.write("</BODY>");
+					out.write("</HTML>");
 				}
 			}
-			
-			
-
+			System.out.printf("Report has been successfuly written to file %s \n",outFile);
 	}
 	
-/*
- drop table link_column_same_bs;
-create table if not exists link_column_group(
- workflow_id  bigint not null ,
- scope varchar(10) not null,
- parent_column_info_id bigint not null,
- child_column_info_id bigint not null,
- group_num bigint,
- constraint link_column_group_pk primary key (parent_column_info_id,child_column_info_id,workflow_id,scope)
-);
-
-insert into  link_column_group
-select l.workflow_id,
-       'SAME_BS',
-       l.parent_column_info_id,
-       l.child_column_info_id,
-       src.group_num
-from link l 
-inner join (
-     select rownum as group_num,z.*  from (select
-               BIT_SET_EXACT_SIMILARITY,
-               child_table_name,
-               parent_table_name,
-               child_schema_name,
-               parent_schema_name,
-               child_db_name,
-               parent_db_name,
-               workflow_id
-         from link 
-         where workflow_id = 42
-           and BIT_SET_EXACT_SIMILARITY >0
-         group by  BIT_SET_EXACT_SIMILARITY,
-                   child_table_name,
-                   parent_table_name,
-                   child_schema_name,
-                   parent_schema_name,
-                   child_db_name,
-                   parent_db_name,
-                   workflow_id
-having count(1)>1) z
-) src 
-  on l.BIT_SET_EXACT_SIMILARITY = src.BIT_SET_EXACT_SIMILARITY
-	and l.child_table_name = src.child_table_name
-	and l.parent_table_name = src.parent_table_name
-	and l.child_schema_name = src.child_schema_name
-	and l.parent_schema_name = src.parent_schema_name
-	and l.child_db_name = src.child_db_name
-	and l.parent_db_name = src.parent_db_name
-	and l.workflow_id = src.workflow_id
-;
-
-select distinct
-   	l.parent_db_name,
-   	l.parent_schema_name,
-   	l.parent_table_name,
-   	l.parent_name,
-   	l.child_db_name,
-   	l.child_schema_name,
-   	l.child_table_name,
-   	l.child_name,
-   	l.BIT_SET_EXACT_SIMILARITY,
-   	l.LUCINE_SAMPLE_TERM_SIMILARITY,
-   	lr.BIT_SET_EXACT_SIMILARITY,
-   	lr.LUCINE_SAMPLE_TERM_SIMILARITY,
-     bs.group_num,
-     case when cp.HASH_UNIQUE_COUNT = cc.HASH_UNIQUE_COUNT then 'x' end as unique_same  
-  from link l
-   inner join column_info cp on cp.id = l.PARENT_COLUMN_INFO_ID
-   inner join column_info cc on cc.id = l.CHILD_COLUMN_INFO_ID
-   left outer join link_column_group bs
-     on bs.scope = 'SAME_BS'
-    and bs.workflow_id = l.workflow_id
-    and bs.parent_column_info_id = l.parent_column_info_id 
-    and bs.child_column_info_id = l.child_column_info_id 
-    --and (bs.parent_column_info_id = l.parent_column_info_id or bs.child_column_info_id = l.parent_column_info_id)
-   -- and (bs.child_column_info_id = l.child_column_info_id or bs.parent_column_info_id = l.child_column_info_id)
-   left outer join link lr
-     on lr.workflow_id = l.workflow_id
-    and lr.parent_column_info_id = l.parent_column_info_id 
-    and lr.child_column_info_id = l.child_column_info_id 
-where l.workflow_id = 42   
-
-   
-
-select * from link_column_group
-
-
-select l.workflow_id,
-       l.parent_column_info_id,
-       l.child_column_info_id,
-       rownum from link l
- inner join column_info p on l.PARENT_COLUMN_INFO_ID = p.ID
- inner join column_info c on l.CHILD_COLUMN_INFO_ID = c.ID
-where c.HASH_UNIQUE_COUNT = p.HASH_UNIQUE_COUNT 
-
-
-WITH RECURSIVE T(N) AS (
-    SELECT 1
-    UNION ALL
-    SELECT N+1 FROM T WHERE N<10
-)
-select * from t
-
-WITH RECURSIVE back(group_num,pid,cid) AS (
-    SELECT top(1) group_num,parent_column_info_id,parent_column_info_id
-     from link_column_group t
-     where t.scope='UNIQUE_CNT'
-       and ( t.parent_column_info_id in (pid,cid) or
-             t.child_column_info_id in (pid,cid) )
-)
-select *
- from link l
- left outer join back b on p_id = l.parent_column_info_id and c_id = l.child_column_info_id
- 
- */
+	
 	
 	
 	static class HTMLFileWriter extends FileWriter {
