@@ -168,6 +168,8 @@ public class ClusteringLauncher {
    	 "   ,lr.LUCINE_SAMPLE_TERM_SIMILARITY " +
      "   ,bs.group_num " +
      "   ,case when cp.HASH_UNIQUE_COUNT = cc.HASH_UNIQUE_COUNT then 'x' end as unique_same" +  
+   	 "   ,cp.HASH_UNIQUE_COUNT"+
+   	 "   ,cc.HASH_UNIQUE_COUNT"+
      "   ,l.id " +  
      "   ,lr.id " +  
 	  " from link l" +
@@ -732,7 +734,9 @@ public class ClusteringLauncher {
 							
 							out.element("TH", "Bitset group");
 							out.element("TH", "Distinct count");
-							
+							out.element("TH", "Child distinct count");
+							out.element("TH", "Parent distinct count");
+
 							out.element("TH", "Link ID");
 							out.element("TH", "Reversal Link ID");
 
@@ -784,10 +788,16 @@ public class ClusteringLauncher {
 						// Distict count
 						out.element("TD", "style='text-align:center;'",rs.getString(14));
 
-						//Link Id
+
+						// Child distinct count
 						out.elementf("TD","class='integer'", "%d", rs.getObject(15));
-						//Reversal Link Id
+						// Parent distinct count
 						out.elementf("TD","class='integer'", "%d", rs.getObject(16));
+						
+						//Link Id
+						out.elementf("TD","class='integer'", "%d", rs.getObject(17));
+						//Reversal Link Id
+						out.elementf("TD","class='integer'", "%d", rs.getObject(18));
 
 						out.write("</TR>");
 
