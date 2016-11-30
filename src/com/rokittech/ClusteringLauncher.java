@@ -15,7 +15,6 @@ import java.sql.Statement;
 import java.util.Locale;
 import java.util.Properties;
 
-import com.zaxxer.sparsebits.SparseBitSet;
 
 public class ClusteringLauncher {
 	// c --uid edm --pwd edmedm --url tcp://localhost:9092/edm --wid 41 --label
@@ -101,11 +100,16 @@ public class ClusteringLauncher {
 			+ "     ,lr.lucine_sample_term_similarity\n"  
 			+ "     ,p.bitset_level\n"  
 			+ "     ,p.lucene_level\n"  
-			+ "     ,pc.unique_hash_count as parent_unique_hash_count\n"
 			+ "     ,pc.real_type         as parent_real_type \n"
 			+ "     ,pc.data_scale        as parent_data_scale \n"
 			+ "     ,pc.max_val           as parent_max \n"
-			+ "     ,pc.min_val           as parent_min \n"
+			+ "     ,pc.min_val           as parent_min \n" 
+			+ "     ,pc.hash_unique_count as parent_huq \n" 
+			+ "     ,cc.real_type         as child_real_type \n"
+			+ "     ,cc.data_scale        as child_data_scale \n"
+			+ "     ,cc.max_val           as child_max \n"
+			+ "     ,cc.min_val           as child_min \n"
+			+ "     ,cc.hash_unique_count as child_huq \n" 
 			+ "   from link_clustered_column_param p\n"
 			+ "     inner join link_clustered_column c on p.workflow_id = c.workflow_id and p.cluster_label = c.cluster_label\n"
 			+ "     inner join link l on c.column_info_id in (l.parent_column_info_id,l.child_column_info_id)\n"
@@ -178,13 +182,21 @@ public class ClusteringLauncher {
    	 "   ,lr.BIT_SET_EXACT_SIMILARITY " +
    	 "   ,lr.LUCINE_SAMPLE_TERM_SIMILARITY " +
      "   ,bs.group_num " +
-     "   ,case when cp.HASH_UNIQUE_COUNT = cc.HASH_UNIQUE_COUNT then 'x' end as unique_same" +  
-   	 "   ,cp.HASH_UNIQUE_COUNT"+
-   	 "   ,cc.HASH_UNIQUE_COUNT"+
-     "   ,l.id " +  
-     "   ,lr.id " +  
+     "   ,case when pc.HASH_UNIQUE_COUNT = cc.HASH_UNIQUE_COUNT then 'Y' end as unique_same" +  
+	 "   ,pc.real_type         as parent_real_type \n" +
+	 "   ,pc.data_scale        as parent_data_scale \n" + 
+	 "   ,pc.max_val           as parent_max \n" + 
+	 "   ,pc.min_val           as parent_min \n" + 
+	 "   ,pc.hash_unique_count as parent_huq \n" + 
+     "   ,cc.real_type         as child_real_type \n" + 
+	 "   ,cc.data_scale        as child_data_scale \n" + 
+	 "   ,cc.max_val           as child_max \n" + 
+	 "   ,cc.min_val           as child_min \n" +
+	 "   ,cc.hash_unique_count as child_huq \n"+ 
+	 "   ,l.id " +  
+     "   ,lr.id " +    
 	  " from link l" +
-	  " inner join column_info cp on cp.id = l.PARENT_COLUMN_INFO_ID" +
+	  " inner join column_info pc on pc.id = l.PARENT_COLUMN_INFO_ID" +
 	  " inner join column_info cc on cc.id = l.CHILD_COLUMN_INFO_ID" +
 	  " left outer join link_column_group bs" +
 	  "   on bs.scope = 'SAME_BS'" +
@@ -535,9 +547,33 @@ public class ClusteringLauncher {
 
 		conn.commit();
 	}
-	static final BigDecimal SeqDeviationPct = new BigDecimal(0.03f);
 	
-	private static boolean checkIfSequence(Long column_id ) throws SQLException {
+	static final BigDecimal SequenceDeviationThreshold = new BigDecimal(0.03f);
+	static final BigDecimal BigDecimalOne = new BigDecimal(1);
+	
+	
+	private static boolean ifNumericType(String realType) {
+		
+		 return "java.lang.Byte".equals(realType) ||
+				"java.lang.Short".equals(realType) ||
+				"java.lang.Integer".equals(realType) ||
+				"java.lang.Long".equals(realType); 
+	}
+	
+	
+	
+	private static boolean ifSequenceByRange(BigDecimal minValue,BigDecimal maxValue,BigDecimal hashCount) {
+		if (hashCount == null) return false;
+		if (minValue == null || maxValue == null) return false;
+		
+		BigDecimal range = maxValue.subtract(minValue).add(BigDecimalOne).abs();
+		BigDecimal pct = hashCount.subtract(range).divide(range);
+		
+		return pct.compareTo(SequenceDeviationThreshold) <= 0;
+	}
+	
+	
+	private static boolean checkIfColumnSequence(Long column_id ) throws SQLException {
 		
 		try( PreparedStatement ps = conn.prepareStatement(
 						" select real_type,data_scale,max_val,min_val,hash_unique_count "
@@ -551,16 +587,9 @@ public class ClusteringLauncher {
 					Long dataScale = rs.getLong(2);
 					String maxSValue = rs.getString(3);
 					String minSValue = rs.getString(4);
-					BigDecimal hashUnique = rs.getBigDecimal(5);
+					BigDecimal hashCount = rs.getBigDecimal(5);
 					
-					if ("java.lang.Byte".equals(realType) ||
-							"java.lang.Short".equals(realType) ||
-							"java.lang.Integer".equals(realType) ||
-							"java.lang.Long".equals(realType) 
-							) {
-								return false;
-					}
-					
+					if (!ifNumericType(realType)) return false;
 					
 					BigDecimal maxValue,minValue;  
 					try {
@@ -574,13 +603,10 @@ public class ClusteringLauncher {
 						return false;
 					}
 					
-					BigDecimal range = maxValue.subtract(minValue).add(BigDecimal.ONE).abs();
-					BigDecimal pct = hashUnique.subtract(range).divide(range);
-					if (pct.compareTo(SeqDeviationPct) >= 0) {
-						return false;
-					}
+					if (!ifSequenceByRange(minValue, maxValue, hashCount)) return false;
 				}
 			}
+		}
 		return true;
 	}
 	/*
@@ -611,16 +637,7 @@ public class ClusteringLauncher {
 			}
 		}
 
-		/*
-		 	int val = rs.getInt(1);
-			if (val < 0 ) 
-					bsn.set( - val);
-			else
-					(
-							bsn.)
-			bs.set();
 
-		 */
 		bs.nextSetBit(arg0)
 	}*/
 
@@ -789,6 +806,7 @@ public class ClusteringLauncher {
 							out.write("<STYLE>");
 							out.write(".confidence {mso-number-format:\"0\\.00000\";text-align:right;}");
 							out.write(".integer {mso-number-format:\"0\";text-align:right;}");
+							out.write(".centered {text-align:center;}");
 							out.write("</STYLE>");
 							out.write("</HEADER>");
 							out.write("<BODY>");
@@ -797,20 +815,42 @@ public class ClusteringLauncher {
 							out.write("</P>");
 							out.write("<TABLE BORDER>");
 							out.write(""+
-							 "<col width=100>"+
+							//Parent db entry
+							"<col width=100>"+
 							 "<col width=128>"+
 							 "<col width=150>"+
 							 "<col width=175>"+
+
+							 //Child db entry
 							 "<col width=100>"+
 							 "<col width=120>"+
 							 "<col width=150>"+
 							 "<col width=175>"+
+							
+							 //Confidence columns
+							 "<col width=100>"+
+							 "<col width=100>"+
+							 "<col width=100>"+
+							 "<col width=100>"+
+							 
+							 //indicators
+							 "<col width=75>"+
+							 "<col width=75>"+
+
+							 //Parent stats
 							 "<col width=100>"+
 							 "<col width=100>"+
 							 "<col width=100>"+
 							 "<col width=100>"+
 							 "<col width=100>"+
+							
+							 //child stats
 							 "<col width=100>"+
+							 "<col width=100>"+
+							 "<col width=100>"+
+							 "<col width=100>"+
+							 "<col width=100>"+
+							 // Ids
 							 "<col width=50>"+
 							 "<col width=50>"+
 							 "");
@@ -832,8 +872,18 @@ public class ClusteringLauncher {
 							
 							out.element("TH", "Bitset group");
 							out.element("TH", "Equal distinct count");
-							out.element("TH", "Child distinct count");
+							
+							out.element("TH", "Parent is sequential integer");
 							out.element("TH", "Parent distinct count");
+							out.element("TH", "Parent min value");
+							out.element("TH", "Parent max value");
+							out.element("TH", "Parent mapped type");
+
+							out.element("TH", "Child is sequential integer");
+							out.element("TH", "Child distinct count");
+							out.element("TH", "Child min value");
+							out.element("TH", "Child max value");
+							out.element("TH", "Child mapped type");
 
 							out.element("TH", "Link ID");
 							out.element("TH", "Reversal Link ID");
@@ -883,19 +933,106 @@ public class ClusteringLauncher {
 						// Bitset group
 						out.elementf("TD","class='integer'", "%d", rs.getObject(13));
 
-						// Distict count
-						out.element("TD", "style='text-align:center;'",rs.getString(14));
+						// Distinct count
+						out.element("TD", "class='centered'",rs.getString(14));
+						
+						{
+							boolean isSeq = ifNumericType(rs.getString(15));
+							BigDecimal minValue = null,maxValue=null;
+							
+							if (isSeq && rs.getInt(16)>0) 
+								isSeq = false;
+								
+								
+							
+							if (isSeq) {
+								try {
+									minValue = new BigDecimal(rs.getString(17));
+									maxValue = new BigDecimal(rs.getString(18));
+								} catch (NumberFormatException nfe) {
+									isSeq = false;
+									minValue = null;
+									maxValue = null;
+								}
+							}
+							
+							if (isSeq && (minValue.scale()> 0 || maxValue.scale()> 0)) 
+								isSeq = false;
+							
+							if (isSeq && minValue != null && maxValue != null) 
+								if (!ifSequenceByRange(minValue, maxValue, rs.getBigDecimal(19))) 
+									isSeq = false;
+								
+							
+							out.element("TD", "class='centered'", (isSeq ? "Y" : null));
 
+							// Parent distinct count
+							out.elementf("TD","class='integer'", "%d", rs.getObject(19));
 
-						// Child distinct count
-						out.elementf("TD","class='integer'", "%d", rs.getObject(15));
-						// Parent distinct count
-						out.elementf("TD","class='integer'", "%d", rs.getObject(16));
+							
+							if 	(minValue != null && maxValue != null) {
+								out.elementf("TD","class='integer'", "%d", rs.getString(17));
+								out.elementf("TD","class='integer'", "%d", rs.getString(18));
+							} else {
+								out.element("TD", null);
+								out.element("TD", null);
+							}
+							out.element("TD", rs.getString(15));
+
+						}
+						
+						
+
+						{
+							boolean isSeq = ifNumericType(rs.getString(20));
+							BigDecimal minValue = null,maxValue=null;
+							
+							if (isSeq && rs.getInt(21)>0) 
+								isSeq = false;
+								
+								
+							
+							if (isSeq) {
+								try {
+									minValue = new BigDecimal(rs.getString(22));
+									maxValue = new BigDecimal(rs.getString(23));
+								} catch (NumberFormatException nfe) {
+									isSeq = false;
+									minValue = null;
+									maxValue = null;
+								}
+							}
+							
+							if (isSeq && (minValue.scale()> 0 || maxValue.scale()> 0)) 
+								isSeq = false;
+							
+							if (isSeq && minValue != null && maxValue != null) 
+								if (!ifSequenceByRange(minValue, maxValue, rs.getBigDecimal(24))) 
+									isSeq = false;
+								
+							out.element("TD", "class='centered'", (isSeq ? "Y" : null));
+							// Child distinct count
+							out.elementf("TD","class='integer'", "%d", rs.getObject(24));
+							
+							if 	(minValue != null && maxValue != null) {
+								out.elementf("TD","class='integer'", "%d", rs.getString(22));
+								out.elementf("TD","class='integer'", "%d", rs.getString(23));
+							} else {
+								out.element("TD", null);
+								out.element("TD", null);
+							}
+
+							out.element("TD", rs.getString(20));
+
+						}
+						
+						
+						
 						
 						//Link Id
-						out.elementf("TD","class='integer'", "%d", rs.getObject(17));
+						out.elementf("TD","class='integer'", "%d", rs.getObject(25));
 						//Reversal Link Id
-						out.elementf("TD","class='integer'", "%d", rs.getObject(18));
+						out.elementf("TD","class='integer'", "%d", rs.getObject(26));
 
 						out.write("</TR>");
 
