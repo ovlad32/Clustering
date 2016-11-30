@@ -2,6 +2,8 @@ package com.rokittech;
 
 import java.io.FileWriter;
 import java.io.IOException;
+import java.math.BigDecimal;
+import java.math.MathContext;
 import java.net.URLEncoder;
 import java.nio.charset.Charset;
 import java.sql.Connection;
@@ -12,6 +14,8 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Locale;
 import java.util.Properties;
+
+import com.zaxxer.sparsebits.SparseBitSet;
 
 public class ClusteringLauncher {
 	// c --uid edm --pwd edmedm --url tcp://localhost:9092/edm --wid 41 --label
@@ -97,9 +101,16 @@ public class ClusteringLauncher {
 			+ "     ,lr.lucine_sample_term_similarity\n"  
 			+ "     ,p.bitset_level\n"  
 			+ "     ,p.lucene_level\n"  
+			+ "     ,pc.unique_hash_count as parent_unique_hash_count\n"
+			+ "     ,pc.real_type         as parent_real_type \n"
+			+ "     ,pc.data_scale        as parent_data_scale \n"
+			+ "     ,pc.max_val           as parent_max \n"
+			+ "     ,pc.min_val           as parent_min \n"
 			+ "   from link_clustered_column_param p\n"
 			+ "     inner join link_clustered_column c on p.workflow_id = c.workflow_id and p.cluster_label = c.cluster_label\n"
 			+ "     inner join link l on c.column_info_id in (l.parent_column_info_id,l.child_column_info_id)\n"
+			+ "     inner join column_info pc on pc.id = l.parent_column_info_id "
+			+ "     inner join column_info cc on cc.id = l.child_column_info_id "
 			+ "     left outer join link lr\n" + "       on lr.parent_column_info_id = l.child_column_info_id\n"
 			+ "      and lr.child_column_info_id = l.parent_column_info_id\n"
 			+ "      and lr.workflow_id = l.workflow_id\n" + "where p.workflow_id = ?\n" + " and p.cluster_label = ?\n"
@@ -524,6 +535,94 @@ public class ClusteringLauncher {
 
 		conn.commit();
 	}
+	static final BigDecimal SeqDeviationPct = new BigDecimal(0.03f);
+	
+	private static boolean checkIfSequence(Long column_id ) throws SQLException {
+		
+		try( PreparedStatement ps = conn.prepareStatement(
+						" select real_type,data_scale,max_val,min_val,hash_unique_count "
+						+ " from column_info c where c.id = ?") 	) {
+			ps.setLong(1, column_id.longValue());
+			try (
+					ResultSet rs = ps.executeQuery()
+					) {
+				while (rs.next()) {
+					String realType = rs.getString(1);
+					Long dataScale = rs.getLong(2);
+					String maxSValue = rs.getString(3);
+					String minSValue = rs.getString(4);
+					BigDecimal hashUnique = rs.getBigDecimal(5);
+					
+					if ("java.lang.Byte".equals(realType) ||
+							"java.lang.Short".equals(realType) ||
+							"java.lang.Integer".equals(realType) ||
+							"java.lang.Long".equals(realType) 
+							) {
+								return false;
+					}
+					
+					
+					BigDecimal maxValue,minValue;  
+					try {
+						maxValue = new BigDecimal(maxSValue);
+						minValue = new BigDecimal(minSValue);
+					} catch (NumberFormatException nfe) {
+						return false;
+					}
+					
+					if (maxValue.scale()>0 || minValue.scale()>0) {
+						return false;
+					}
+					
+					BigDecimal range = maxValue.subtract(minValue).add(BigDecimal.ONE).abs();
+					BigDecimal pct = hashUnique.subtract(range).divide(range);
+					if (pct.compareTo(SeqDeviationPct) >= 0) {
+						return false;
+					}
+				}
+			}
+		return true;
+	}
+	/*
+	private static void checkIfSequence(Long column_id ) throws SQLException {
+		SparseBitSet bsp = new SparseBitSet(16);
+		SparseBitSet bsn = new SparseBitSet(16);
+		try (
+		PreparedStatement ps = conn.prepareStatement(
+				"select conf.target"
+				+ ", conf.username"
+				+ ", conf.password"
+				+ ", conf.host"
+				+ ", conf.port"
+				+ ", conf.database_name"
+				+ ", tbl.schema_name"
+				+ ", col.name"
+				+ ", tbl.name"
+				+ " from column_info col "
+				+ "  inner join table_info tab  on tab.id = col.table_info_id "
+				+ "  inner join metadata mtd on mtd.id = tab.metadata_id "
+				+ "  inner join database_config conf on conf.id = mtd.database_config.i d"
+				+ " where col.id = ?")
+				) {
+			ps.setLong(1, column_id);
+			try (ResultSet rs = ps.executeQuery()){
+				while (rs.next()) {
+				}
+			}
+		}
+
+		/*
+		 	int val = rs.getInt(1);
+			if (val < 0 ) 
+					bsn.set( - val);
+			else
+					(
+							bsn.)
+			bs.set();
+
+		 */
+		bs.nextSetBit(arg0)
+	}*/
 
 	private static void reportClusters(String clusterLabel, Long workflowId, String outFile)
 			throws SQLException, IOException {
@@ -544,7 +643,6 @@ public class ClusteringLauncher {
 		try (PreparedStatement st = conn.prepareStatement(reportClusteredColumnsQuery);) {
 			st.setLong(1, workflowId);
 			st.setString(2, clusterLabel);
-
 			try (ResultSet rs = st.executeQuery(); 
 					HTMLFileWriter out = new HTMLFileWriter(outFile)) {
 				while (rs.next()) {
@@ -733,7 +831,7 @@ public class ClusteringLauncher {
 							out.element("TH", "Reversal Lucene confidence");
 							
 							out.element("TH", "Bitset group");
-							out.element("TH", "Distinct count");
+							out.element("TH", "Equal distinct count");
 							out.element("TH", "Child distinct count");
 							out.element("TH", "Parent distinct count");
 
