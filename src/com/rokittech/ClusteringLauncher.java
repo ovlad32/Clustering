@@ -615,7 +615,10 @@ public class ClusteringLauncher {
 		return true;
 	}
 	
-	private static void checkIfSequence(Long column_id ) throws SQLException {
+	private static void checkIfSequence(Long column_id ) throws SQLException, ClassNotFoundException, InstantiationException, IllegalAccessException {
+		Connection targetConnection = null;
+		String targetQuery = null;
+		
 		try (
 		PreparedStatement ps = conn.prepareStatement(
 				"select "
@@ -625,9 +628,9 @@ public class ClusteringLauncher {
 				+ ", conf.host"
 				+ ", conf.port"
 				+ ", conf.database_name"
-				+ ", tbl.schema_name"
 				+ ", col.name"
 				+ ", tbl.name"
+				+ ", tbl.schema_name"
 				+ " from column_info col "
 				+ "  inner join table_info tab  on tab.id = col.table_info_id "
 				+ "  inner join metadata mtd on mtd.id = tab.metadata_id "
@@ -638,18 +641,41 @@ public class ClusteringLauncher {
 			try (ResultSet rs = ps.executeQuery()){
 				while (rs.next()) {
 					String url = null;
+					String className = null;
 					String uid = rs.getString(2),
 						   pwd = rs.getString(3); 
 					if ("ORACLE".equals(rs.getString(1))) {
 						url = String.format("jdbc:oracle:thin:@%s:%d:%s", rs.getString(4),rs.getInt(5),rs.getString(6));
+						className = "oracle.jdbc.OracleDriver";
 					} else	if ("SYBASE".equals(rs.getString(1))) {
 						url = String.format("jdbc:jtds:sybase://%s:%d/%s", rs.getString(4),rs.getInt(5),rs.getString(6));
+						className = "net.sourceforge.jtds.jdbc.Driver";
 					} else	if ("MSSQL".equals(rs.getString(1))) {
 						url = String.format("jdbc:jtds:sqlserver://%s:%d/%s", rs.getString(4),rs.getInt(5),rs.getString(6));
+						className = "net.sourceforge.jtds.jdbc.Driver";
 					}
+					Driver driver = (Driver) Class.forName(className).newInstance();
+					Properties p = new Properties();
+					p.put("user", uid);
+					p.put("password", pwd);
+					targetConnection = driver.connect(url, p);
+					targetQuery = String.format("select %s from %s.%s",rs.getString(7),rs.getString(8),rs.getString(9));
+					break;
 				}
 			}
 		}
+		if (targetConnection == null) 
+				System.err.printf("No connection created for column_info_id = %d \n",column_id);
+		try(PreparedStatement ps = targetConnection.prepareStatement(targetQuery);
+				ResultSet rs = ps.executeQuery()){
+			while (rs.next()) {
+				BigDecimal value = rs.getBigDecimal(1);
+				System.out.println(value);
+				
+			}
+		}
+				
+		
 
 
 	}
