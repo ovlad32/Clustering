@@ -8,6 +8,7 @@ import java.net.URLEncoder;
 import java.nio.charset.Charset;
 import java.sql.Connection;
 import java.sql.Driver;
+import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -185,13 +186,13 @@ public class ClusteringLauncher {
      "   ,case when pc.HASH_UNIQUE_COUNT = cc.HASH_UNIQUE_COUNT then 'Y' end as unique_same" +  
 	 "   ,pc.real_type         as parent_real_type \n" +
 	 "   ,pc.data_scale        as parent_data_scale \n" + 
-	 "   ,pc.max_val           as parent_max \n" + 
 	 "   ,pc.min_val           as parent_min \n" + 
+	 "   ,pc.max_val           as parent_max \n" + 
 	 "   ,pc.hash_unique_count as parent_huq \n" + 
      "   ,cc.real_type         as child_real_type \n" + 
 	 "   ,cc.data_scale        as child_data_scale \n" + 
-	 "   ,cc.max_val           as child_max \n" + 
-	 "   ,cc.min_val           as child_min \n" +
+	 "   ,cc.min_val           as child_min \n" + 
+	 "   ,cc.max_val           as child_max \n" +
 	 "   ,cc.hash_unique_count as child_huq \n"+ 
 	 "   ,l.id " +  
      "   ,lr.id " +    
@@ -363,7 +364,7 @@ public class ClusteringLauncher {
 					longOf(args[index + 1]);
 					result.put(args[index].substring(2), args[index + 1]);
 				} catch (NumberFormatException e) {
-					System.err.printf(" parameter %v does not have an integer value !\n", args[index]);
+					System.err.printf(" parameter %s does not have an integer value !\n", args[index]);
 					ok = false;
 				}
 			} else if ("--bl".equals(args[index])) {
@@ -557,7 +558,8 @@ public class ClusteringLauncher {
 		 return "java.lang.Byte".equals(realType) ||
 				"java.lang.Short".equals(realType) ||
 				"java.lang.Integer".equals(realType) ||
-				"java.lang.Long".equals(realType); 
+				"java.lang.Long".equals(realType) ||
+				"java.math.BigDecimal".equals(realType);
 	}
 	
 	
@@ -567,7 +569,10 @@ public class ClusteringLauncher {
 		if (minValue == null || maxValue == null) return false;
 		
 		BigDecimal range = maxValue.subtract(minValue).add(BigDecimalOne).abs();
-		BigDecimal pct = hashCount.subtract(range).divide(range);
+		if (range.equals(BigDecimal.ZERO)) {
+			return false;
+		}
+		BigDecimal pct = hashCount.subtract(range).abs().divide(range,BigDecimal.ROUND_HALF_EVEN);
 		
 		return pct.compareTo(SequenceDeviationThreshold) <= 0;
 	}
@@ -609,13 +614,12 @@ public class ClusteringLauncher {
 		}
 		return true;
 	}
-	/*
+	
 	private static void checkIfSequence(Long column_id ) throws SQLException {
-		SparseBitSet bsp = new SparseBitSet(16);
-		SparseBitSet bsn = new SparseBitSet(16);
 		try (
 		PreparedStatement ps = conn.prepareStatement(
-				"select conf.target"
+				"select "
+				+ "  conf.target"
 				+ ", conf.username"
 				+ ", conf.password"
 				+ ", conf.host"
@@ -633,13 +637,22 @@ public class ClusteringLauncher {
 			ps.setLong(1, column_id);
 			try (ResultSet rs = ps.executeQuery()){
 				while (rs.next()) {
+					String url = null;
+					String uid = rs.getString(2),
+						   pwd = rs.getString(3); 
+					if ("ORACLE".equals(rs.getString(1))) {
+						url = String.format("jdbc:oracle:thin:@%s:%d:%s", rs.getString(4),rs.getInt(5),rs.getString(6));
+					} else	if ("SYBASE".equals(rs.getString(1))) {
+						url = String.format("jdbc:jtds:sybase://%s:%d/%s", rs.getString(4),rs.getInt(5),rs.getString(6));
+					} else	if ("MSSQL".equals(rs.getString(1))) {
+						url = String.format("jdbc:jtds:sqlserver://%s:%d/%s", rs.getString(4),rs.getInt(5),rs.getString(6));
+					}
 				}
 			}
 		}
 
 
-		bs.nextSetBit(arg0)
-	}*/
+	}
 
 	private static void reportClusters(String clusterLabel, Long workflowId, String outFile)
 			throws SQLException, IOException {
@@ -873,13 +886,13 @@ public class ClusteringLauncher {
 							out.element("TH", "Bitset group");
 							out.element("TH", "Equal distinct count");
 							
-							out.element("TH", "Parent is sequential integer");
+							out.element("TH", "Parent Sequential Integers");
 							out.element("TH", "Parent distinct count");
 							out.element("TH", "Parent min value");
 							out.element("TH", "Parent max value");
 							out.element("TH", "Parent mapped type");
 
-							out.element("TH", "Child is sequential integer");
+							out.element("TH", "Child Sequential Integers");
 							out.element("TH", "Child distinct count");
 							out.element("TH", "Child min value");
 							out.element("TH", "Child max value");
@@ -936,6 +949,10 @@ public class ClusteringLauncher {
 						// Distinct count
 						out.element("TD", "class='centered'",rs.getString(14));
 						
+						if ("CONTRACT_ID".equals( rs.getString(4))) {
+							out.text("-");
+						}
+					
 						{
 							boolean isSeq = ifNumericType(rs.getString(15));
 							BigDecimal minValue = null,maxValue=null;
@@ -971,8 +988,8 @@ public class ClusteringLauncher {
 
 							
 							if 	(minValue != null && maxValue != null) {
-								out.elementf("TD","class='integer'", "%d", rs.getString(17));
-								out.elementf("TD","class='integer'", "%d", rs.getString(18));
+								out.elementf("TD","class='integer'", "%s", rs.getString(17));
+								out.elementf("TD","class='integer'", "%s", rs.getString(18));
 							} else {
 								out.element("TD", null);
 								out.element("TD", null);
@@ -1015,8 +1032,8 @@ public class ClusteringLauncher {
 							out.elementf("TD","class='integer'", "%d", rs.getObject(24));
 							
 							if 	(minValue != null && maxValue != null) {
-								out.elementf("TD","class='integer'", "%d", rs.getString(22));
-								out.elementf("TD","class='integer'", "%d", rs.getString(23));
+								out.elementf("TD","class='integer'", "%s", rs.getString(22));
+								out.elementf("TD","class='integer'", "%s", rs.getString(23));
 							} else {
 								out.element("TD", null);
 								out.element("TD", null);
