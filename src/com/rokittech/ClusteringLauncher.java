@@ -16,6 +16,8 @@ import java.sql.Statement;
 import java.util.Locale;
 import java.util.Properties;
 
+import com.zaxxer.sparsebits.SparseBitSet;
+
 
 public class ClusteringLauncher {
 	// c --uid edm --pwd edmedm --url tcp://localhost:9092/edm --wid 41 --label
@@ -194,6 +196,8 @@ public class ClusteringLauncher {
 	 "   ,cc.min_val           as child_min \n" + 
 	 "   ,cc.max_val           as child_max \n" +
 	 "   ,cc.hash_unique_count as child_huq \n"+ 
+ 	 "   ,l.parent_column_info_id \n" +
+	 "   ,l.child_column_info_id \n" + 
 	 "   ,l.id " +  
      "   ,lr.id " +    
 	  " from link l" +
@@ -236,6 +240,8 @@ public class ClusteringLauncher {
 		conn = driver.connect("jdbc:h2:" + url, p);
 
 		execSQL("SET AUTOCOMMIT OFF");
+		makeTableColStats();
+
 
 	}
 
@@ -615,9 +621,10 @@ public class ClusteringLauncher {
 		return true;
 	}
 	
-	private static void checkIfSequence(Long column_id ) throws SQLException, ClassNotFoundException, InstantiationException, IllegalAccessException {
+	private static ColumnStats calculateColStats(BigDecimal column_id ) throws SQLException, ClassNotFoundException, InstantiationException, IllegalAccessException {
 		Connection targetConnection = null;
-		String targetQuery = null;
+		String url = null, targetQuery = null;
+		BigDecimal dataScale = null;
 		
 		try (
 		PreparedStatement ps = conn.prepareStatement(
@@ -629,18 +636,18 @@ public class ClusteringLauncher {
 				+ ", conf.port"
 				+ ", conf.database_name"
 				+ ", col.name"
-				+ ", tbl.name"
-				+ ", tbl.schema_name"
+				+ ", tab.schema_name"
+				+ ", tab.name"
+				+ ", col.data_scale"
 				+ " from column_info col "
 				+ "  inner join table_info tab  on tab.id = col.table_info_id "
 				+ "  inner join metadata mtd on mtd.id = tab.metadata_id "
-				+ "  inner join database_config conf on conf.id = mtd.database_config.i d"
+				+ "  inner join database_config conf on conf.id = mtd.database_config_id "
 				+ " where col.id = ?")
 				) {
-			ps.setLong(1, column_id);
+			ps.setLong(1, column_id.longValue());
 			try (ResultSet rs = ps.executeQuery()){
 				while (rs.next()) {
-					String url = null;
 					String className = null;
 					String uid = rs.getString(2),
 						   pwd = rs.getString(3); 
@@ -654,30 +661,133 @@ public class ClusteringLauncher {
 						url = String.format("jdbc:jtds:sqlserver://%s:%d/%s", rs.getString(4),rs.getInt(5),rs.getString(6));
 						className = "net.sourceforge.jtds.jdbc.Driver";
 					}
+					dataScale = rs.getBigDecimal(10);
 					Driver driver = (Driver) Class.forName(className).newInstance();
 					Properties p = new Properties();
 					p.put("user", uid);
 					p.put("password", pwd);
 					targetConnection = driver.connect(url, p);
-					targetQuery = String.format("select %s from %s.%s",rs.getString(7),rs.getString(8),rs.getString(9));
+					targetQuery = String.format("select %s from %s.%s ",rs.getString(7),rs.getString(8),rs.getString(9));
+					System.out.println(targetQuery);
 					break;
 				}
 			}
 		}
 		if (targetConnection == null) 
-				System.err.printf("No connection created for column_info_id = %d \n",column_id);
+				throw new RuntimeException(String.format("No connection created for column_info_id = %d; url =%s\n",column_id, url));
+		
+		SparseBitSet sb = new SparseBitSet();
+		SparseBitSet sbn = new SparseBitSet();
+		
 		try(PreparedStatement ps = targetConnection.prepareStatement(targetQuery);
 				ResultSet rs = ps.executeQuery()){
+			    ps.setFetchSize(50000);
 			while (rs.next()) {
 				BigDecimal value = rs.getBigDecimal(1);
-				System.out.println(value);
-				
+				if (value == null ) continue;
+				if (value.signum() != -1) { 
+					if (value.scale()>0) {
+						ColumnStats positive = new ColumnStats();
+						targetConnection.close();
+						return positive;
+					} else {
+						sb.set(value.intValueExact());
+					}
+				}
 			}
 		}
-				
+		targetConnection.close();
+
+		System.out.println(sb.size());
+		System.out.println(sb.length());
+		System.out.println(sb.cardinality());
+		System.out.println(sb.cardinality()/2);
 		
 
+		long collectiveStep = 0;
+		int curr = 0, prev = -1, medianPosition;
+		ColumnStats positive = new ColumnStats();
+		if (sb.size() > 1) {
+			int halfSize = (int)(sb.cardinality()/2d);
+			System.out.println(halfSize);
+			
+			int counter = 1;
+			while(true) {
+				curr = sb.nextSetBit(prev+1);
+				if (curr == -1) break;
+				counter++;
+				if (prev != -1) {
+					collectiveStep += curr - prev;  
 
+					if ( counter > halfSize && positive.median == null) {
+						positive.median = new BigDecimal(prev);
+					}
+					
+				}
+				prev = curr;
+				
+			}
+			double movingMean = collectiveStep / (double)(sb.cardinality()-1);
+			System.out.println(positive.median);
+			
+			double collectiveSqrs = 0d; 
+			curr = 0;
+			prev = -1;
+			while(true) {
+				curr = sb.nextSetBit(prev+1);
+				if (curr == -1) break;
+				if (prev != -1) {
+					int delta = (curr - prev);
+					collectiveSqrs = collectiveSqrs + Math.pow(movingMean  - (double)delta,2d);
+				}
+				 prev = curr;
+			}
+			positive.movingMean  = new BigDecimal(movingMean);
+			positive.stdDev  = new BigDecimal(Math.sqrt(collectiveSqrs/(double)(sb.cardinality())));
+			System.out.println(positive.stdDev);
+			
+		}
+		return positive;
+	}
+	
+	private static void makeTableColStats() throws SQLException {
+		execSQL("create table if not exists column_real_stats( "
+				+ "column_id bigint"
+				+ ", movingmean real"
+				+ ", stddev real"
+				+ ", median bigint"
+				+ ", constraint column_real_stats_pk primary key (column_id))");
+	}
+	
+	private static ColumnStats getColStats(BigDecimal column_id) throws SQLException {
+		ColumnStats result  = null;
+		try(PreparedStatement ps = conn.prepareStatement(
+				"select movingmean,stddev,median from column_real_stats where column_id = ? ")) {
+			ps.setLong(1, column_id.longValue());
+			try (ResultSet rs = ps.executeQuery()) {
+				while (rs.next()) {
+					result = new ColumnStats();
+					result.movingMean = rs.getBigDecimal(1);
+					result.stdDev = rs.getBigDecimal(2);
+					result.median = rs.getBigDecimal(3);
+				}
+			}
+		}
+		return result;
+	}
+	
+	private static void saveColStats(BigDecimal column_id , ColumnStats stats ) throws SQLException {
+		try(PreparedStatement ps = conn.prepareStatement(
+				"merge into column_real_stats(column_id,movingmean,stddev,median) "
+				+ "key(column_id) "
+				+ "values (?,?,?,?)")) {
+			ps.setBigDecimal(1, column_id);
+			ps.setBigDecimal(2,stats.movingMean);
+			ps.setBigDecimal(3,stats.stdDev);
+			ps.setBigDecimal(4,stats.median);
+			ps.execute();
+		}
+		execSQL("Commit");
 	}
 
 	private static void reportClusters(String clusterLabel, Long workflowId, String outFile)
@@ -805,9 +915,11 @@ public class ClusteringLauncher {
 		}
 		System.out.printf("Report has been successfuly written to file %s \n",outFile);
 	}
+	
+	
     
 	private static void reportAllCoumnPairs(Long workflowId, String outFile) 
-		throws SQLException, IOException {
+		throws SQLException, IOException, ClassNotFoundException, InstantiationException, IllegalAccessException {
 			Locale.setDefault(Locale.US);
 
 			if (workflowId == null) {
@@ -882,8 +994,14 @@ public class ClusteringLauncher {
 							 "<col width=100>"+
 							 "<col width=100>"+
 							 "<col width=100>"+
+							 "<col width=100>"+
+							 "<col width=100>"+
+							 "<col width=100>"+
 							
 							 //child stats
+							 "<col width=100>"+
+							 "<col width=100>"+
+							 "<col width=100>"+
 							 "<col width=100>"+
 							 "<col width=100>"+
 							 "<col width=100>"+
@@ -916,12 +1034,18 @@ public class ClusteringLauncher {
 							out.element("TH", "Parent distinct count");
 							out.element("TH", "Parent min value");
 							out.element("TH", "Parent max value");
+							out.element("TH", "Parent median");
+							out.element("TH", "Parent moving mean");
+							out.element("TH", "Parent standard deviation of moving mean");
 							out.element("TH", "Parent mapped type");
 
 							out.element("TH", "Child Sequential Integers");
 							out.element("TH", "Child distinct count");
 							out.element("TH", "Child min value");
 							out.element("TH", "Child max value");
+							out.element("TH", "Child median");
+							out.element("TH", "Child moving mean");
+							out.element("TH", "Child standard deviation of moving mean");
 							out.element("TH", "Child mapped type");
 
 							out.element("TH", "Link ID");
@@ -975,11 +1099,11 @@ public class ClusteringLauncher {
 						// Distinct count
 						out.element("TD", "class='centered'",rs.getString(14));
 						
-						if ("CONTRACT_ID".equals( rs.getString(4))) {
+						/*if ("CONTRACT_ID".equals( rs.getString(4))) {
 							out.text("-");
-						}
+						} */
 					
-						{
+						{ 
 							boolean isSeq = ifNumericType(rs.getString(15));
 							BigDecimal minValue = null,maxValue=null;
 							
@@ -1019,6 +1143,24 @@ public class ClusteringLauncher {
 							} else {
 								out.element("TD", null);
 								out.element("TD", null);
+							}
+							
+							
+							if (ifNumericType(rs.getString(15))) {
+							    BigDecimal column_id = rs.getBigDecimal(25); //parent
+								ColumnStats stats = getColStats(column_id);
+								if (stats == null) {
+									stats = calculateColStats(column_id);
+									saveColStats(column_id, stats);
+								}
+								//TODO:continue from here
+								out.elementf("TD", "class='integer'", "%d",(stats.median==null?null:stats.median.intValue()));
+								out.elementf("TD", "class='confidence'", "%f",stats.movingMean);
+								out.elementf("TD", "class='confidence'", "%f",stats.stdDev);
+							} else {
+								out.elementf("TD", "", "%s",null);
+								out.elementf("TD", "", "%s",null);
+								out.elementf("TD", "", "%s",null);
 							}
 							out.element("TD", rs.getString(15));
 
@@ -1065,17 +1207,37 @@ public class ClusteringLauncher {
 								out.element("TD", null);
 							}
 
+							if (ifNumericType(rs.getString(20))) {
+							    BigDecimal column_id = rs.getBigDecimal(26); //child
+								ColumnStats stats = getColStats(column_id);
+								if (stats == null) {
+									stats = calculateColStats(column_id);
+									saveColStats(column_id, stats);
+								}
+								//TODO:continue from here
+								out.elementf("TD", "class='integer'",    "%d", (stats.median==null?null:stats.median.intValue()));
+								out.elementf("TD", "class='confidence'", "%f",stats.movingMean);
+								out.elementf("TD", "class='confidence'", "%f",stats.stdDev);
+							} else {
+								out.elementf("TD", "", "%s",null);
+								out.elementf("TD", "", "%s",null);
+								out.elementf("TD", "", "%s",null);
+							}
 							out.element("TD", rs.getString(20));
-
 						}
+					
+						
+						
+						
+						
 						
 						
 						
 						
 						//Link Id
-						out.elementf("TD","class='integer'", "%d", rs.getObject(25));
+						out.elementf("TD","class='integer'", "%d", rs.getObject(27));
 						//Reversal Link Id
-						out.elementf("TD","class='integer'", "%d", rs.getObject(26));
+						out.elementf("TD","class='integer'", "%d", rs.getObject(28));
 
 						out.write("</TR>");
 
@@ -1140,5 +1302,10 @@ public class ClusteringLauncher {
 			super.write("</"); super.write(tag);super.write(">");
 		}
 
+	}
+	private static class ColumnStats {
+		BigDecimal movingMean;
+		BigDecimal stdDev;
+		BigDecimal   median;
 	}
 }
