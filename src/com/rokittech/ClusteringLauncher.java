@@ -23,7 +23,18 @@ public class ClusteringLauncher {
 	// c --uid edm --pwd edmedm --url tcp://localhost:9092/edm --wid 41 --label
 	// L1 --bl 0.4
 	static Connection conn;
+/*
+ 
+			select * from link_clustered_column where workflow_id = 66
+			delete from link_clustered_column where workflow_id = 66
 
+			select pci.min_val,pci.max_val,cci.id,cci.min_val,cci.max_val from link l
+ inner join column_info cci on cci.id = l.child_column_info_id
+ inner join column_info pci on pci.id = l.parent_column_info_id
+where workflow_id = 66 and parent_column_info_id = 947
+
+
+*/
 	static final String clusteredColumnTableDefinition = "create table if not exists link_clustered_column(\n"
 			+ " column_info_id bigint not null \n" + " ,workflow_id   bigint not null \n"
 			+ " ,cluster_no    integer not null \n" + " ,cluster_label varchar(100) not null \n"
@@ -43,39 +54,186 @@ public class ClusteringLauncher {
 			 "group_num bigint,"+
 			 "constraint link_column_group_pk primary key (parent_column_info_id,child_column_info_id,workflow_id,scope))";
 
-	static final String initialClusteringQuery = "insert into link_clustered_column(column_info_id,workflow_id,cluster_no,cluster_label)\n"
-			+ "              select \n" + "              t.parent_column_info_id as column_info_id \n"
-			+ "    , t.workflow_id \n" + "    , t.cluster_no \n" + "    , t.cluster_label\n" + "    from (\n"
-			+ "   select top 1 \n" + "          count(1) as cnt \n" + "          , p.* \n"
-			+ "          , l.parent_column_info_id \n" + "     from link  l\n" + "      cross join (select\n"
-			+ "         convert(?, varchar(100)) as cluster_label \n" + "         , convert(?, int)   as workflow_id \n"
-			+ "         , convert(?, int)  as cluster_no \n" + "         , convert(?, real) as bitset_level \n"
-			+ "         , convert(?, real) as lucene_level \n" + "         ) p\n"
-			+ "      left outer join link_clustered_column c\n"
-			+ "          on c.column_info_id in (l.parent_column_info_id,child_column_info_id)\n"
-			+ "        and c.cluster_label = p.cluster_label\n" + "     where l.workflow_id = p.workflow_id\n"
-			+ "     and (l.bit_set_exact_similarity >= p.bitset_level or p.bitset_level is null)\n"
-			+ "     and (l.lucine_sample_term_similarity >= p.lucene_level or p.lucene_level is null)\n"
-			+ "     and c.column_info_id is null\n" + "  group by parent_column_info_id\n" + "  having count(1) >1 \n"
-			+ "  order by cnt desc\n" + ") t ";
+	static final String initialClusteringQuery = "insert into link_clustered_column"
+			+ " (column_info_id,workflow_id,cluster_no,cluster_label) "
+			+ "  select  "
+			+ "	     t.parent_column_info_id as column_info_id " 
+			+ "		     , t.workflow_id   "
+			+ "		     , t.cluster_no   "
+			+ "		     , t.cluster_label "
+			+ "		     from ( "
+			+ "		    select top 1   "
+			+ "		           count(1) as cnt "  
+			+ "		            ,p.*  "
+			+ "		           , l.parent_column_info_id "
+			+ "		      from link  l   "
+			+ "		      cross join (select "
+			+ "		          cast(? as  varchar(100)) as cluster_label "            
+			+ "		          , cast(? as bigint)   as workflow_id  "
+			+ "		          , cast(? as bigint)  as cluster_no         "    
+			+ "		          , cast(? as  double) as bitset_level   "
+			+ "		          , cast(? as double) as lucene_level     "
+			+ "               ) p  "
+			+ "		       left outer join link_clustered_column c "
+			+ "		           on c.column_info_id in (l.parent_column_info_id,child_column_info_id) "
+			+ "		         and c.cluster_label = p.cluster_label "       
+			+ "		         and c.workflow_id = p.workflow_id "
+			+ "		      where l.workflow_id = p.workflow_id "
+			+ "		      and (l.bit_set_exact_similarity >= p.bitset_level or p.bitset_level is null) "
+			+ "		      and (l.lucine_sample_term_similarity >= p.lucene_level or p.lucene_level is null) "
+			+ "		      and c.column_info_id is null    " 
+			+ "		     group by parent_column_info_id "
+			+ "		     having count(1) >1  "
+			+ "		     order by cnt desc " 
+			+ "		   ) t ";
+			/*
+			+ " (column_info_id,workflow_id,cluster_no,cluster_label,lowerbound,upperbound) "
+		      + " select  "
+		      + "  t.parent_column_info_id as column_info_id   "
+		      + "  , t.workflow_id  "
+		      + "  , t.cluster_no  "
+		      + "  , t.cluster_label "
+		      + "  , t.lowerbound "
+		      + "  , t.upperbound " 
+		      + "   from ( "
+		      + "  select top 1   "
+		      + "         count(1) as cnt   "
+		      + "         , p.*  "
+		      + "         , l.parent_column_info_id "
+		      + "         ,min( greatest( "
+		      + "            cast(case when pcrn.real_type is not null then pci.min_val end as double), "
+		      + "            cast(case when ccrn.real_type is not null then cci.min_val end as double) )) as lowerbound "
+		      + "         ,max( least( "
+		      + "            cast(case when pcrn.real_type is not null then pci.max_val end as double), "
+		      + "            cast(case when ccrn.real_type is not null then cci.max_val end as double) )) as upperbound "
+		      + "    from link  l  "
+		      + "    cross join (select "
+		      + "        cast(? as  varchar(100)) as cluster_label    "
+		      + "        , cast(? as bigint)   as workflow_id "
+		      + "        , cast(? as bigint)  as cluster_no  "       
+		      + "        , cast(? as  double) as bitset_level  "
+		      + "        , cast (? as double) as lucene_level   "        
+		      + "       ) p  "
+		      + "     inner join column_info pci   "
+		      + "         on pci.id = l.parent_column_info_id  "
+		      + "     left outer join COLUMN_NUMERIC_REAL_TYPE pcrn   "
+		      + "         on pcrn.real_type = pci.real_type  "
+		      + "     inner join column_info cci   "
+		      + "         on cci.id = l.child_column_info_id  "
+		      + "     left outer join COLUMN_NUMERIC_REAL_TYPE ccrn   "
+		      + "         on ccrn.real_type = cci.real_type  "
+		      + "     left outer join link_clustered_column c  "
+		      + "         on c.column_info_id in (l.parent_column_info_id,child_column_info_id)  "
+		      + "       and c.cluster_label = p.cluster_label  "
+		      + "       and c.workflow_id = p.workflow_id  "
+		      + "    where l.workflow_id = p.workflow_id  "
+		      + "    and (l.bit_set_exact_similarity >= p.bitset_level or p.bitset_level is null)  "
+		      + "    and (l.lucine_sample_term_similarity >= p.lucene_level or p.lucene_level is null)  "
+		      + "    and c.column_info_id is null      "
+		      + "   group by parent_column_info_id  "
+		      + "   having count(1) >1   "
+		      + " order by cnt desc, lowerbound asc nulls last, upperbound desc nulls last  "
+		      + " ) t   ";
+		  			*/
 
-	static final String workingClusteringQuery = "insert into link_clustered_column(column_info_id,workflow_id,cluster_no,cluster_label)\n"
-			+ " select distinct t.column_info_id,t.workflow_id,t.cluster_no,t.cluster_label\n" + "  from (\n"
-			+ "   select\n" + "     c.workflow_id\n" + "     , c.cluster_no\n" + "     , c.cluster_label\n"
-			+ "     , case when c.column_info_id = l.child_column_info_id then l.parent_column_info_id else l.child_column_info_id end as column_info_id\n"
-			+ "     from (select\n" + "         convert(?, varchar(100)) as cluster_label \n"
-			+ "         , convert(?, int)   as workflow_id \n" + "         , convert(?, int)  as cluster_no \n"
-			+ "         , convert(?, real) as bitset_level \n" + "         , convert(?, real) as lucene_level \n"
-			+ "          ) p\n" + "   inner join link_clustered_column c\n" + "    on c.workflow_id = p.workflow_id\n"
-			+ "   and c.cluster_no = p.cluster_no\n" + "   and c.cluster_label = p.cluster_label\n"
-			+ "  inner join link l\n" + "   on l.workflow_id =  c.workflow_id\n"
-			+ "  and c.column_info_id in (l.parent_column_info_id, l.child_column_info_id)\n"
-			+ " where (l.bit_set_exact_similarity >= p.bitset_level or p.bitset_level is null)\n"
-			+ "   and (l.lucine_sample_term_similarity >= p.lucene_level or p.lucene_level is null)\n"
-			+ ") t left outer join link_clustered_column c\n" + "   on c.COLUMN_INFO_ID = t.column_info_id\n"
-			+ "  and c.workflow_id  = t.workflow_id\n" + "  and c.cluster_label = t.cluster_label\n" +
-			// " and c.cluster_no = t.cluster_no\n" +
-			"  where c.column_info_id is null\n";
+	static final String workingClusteringQuery = "insert into link_clustered_column"
+			+ " (column_info_id,workflow_id,cluster_no,cluster_label) \n"
+			+ " select  distinct  "
+		 	+ " t.column_info_id, "
+		 	+ " t.workflow_id, "
+		 	+ " t.cluster_no, "
+		 	+ " t.cluster_label "    
+		 	+ " 	from ( "
+		    + "     select  "
+		    + "         c.workflow_id       " 
+		    + "       , c.cluster_no      "  
+		    + "       , c.cluster_label "
+		    + "       , case when c.column_info_id = l.child_column_info_id then l.parent_column_info_id else l.child_column_info_id end as column_info_id "
+		    + "       ,(select min(cv.max_val)  "
+		    + "                from  link_clustered_column tc  "
+		    + "                inner join column_info_numeric_range_view cv on cv.id = tc.column_info_id  "
+		    + "                where tc.cluster_no = p.cluster_no and tc.cluster_label = p.cluster_label "
+		    + "               ) as upperbound "
+		    + "       ,(select max(cv.min_val)  "
+		    + "                from  link_clustered_column tc  "
+		    + "                inner join column_info_numeric_range_view cv on cv.id = tc.column_info_id  "
+		    + "                where tc.cluster_no = p.cluster_no and tc.cluster_label = p.cluster_label "
+		    + "                ) as lowerbound "
+		    + "    from (select            "
+		    + "         cast(? as  varchar(100)) as cluster_label " 
+		    + "       , cast(? as bigint)   as workflow_id "            
+		    + "       , cast(? as bigint)  as cluster_no  "
+		    + "       , cast(? as real) as bitset_level   "          
+		    + "       , cast(? as real) as lucene_level "
+		    + "        ) p      "
+		    + "      inner join link_clustered_column c  "     
+		    + "       on c.workflow_id = p.workflow_id "
+		    + "      and c.cluster_no = p.cluster_no      "
+		    + "      and c.cluster_label = p.cluster_label "
+		    + "     inner join link l      "
+		    + "      on l.workflow_id =  c.workflow_id "
+		    + "     and c.column_info_id in (l.parent_column_info_id, l.child_column_info_id) "
+		    + " where (l.bit_set_exact_similarity >= p.bitset_level or p.bitset_level is null) "
+		    + " and (l.lucine_sample_term_similarity >= p.lucene_level or p.lucene_level is null) "
+		    + " ) t  "
+		    + " inner  join column_info_numeric_range_view ci " 
+		    + "   on ci.id = t.column_info_id "
+		    + " left outer join link_clustered_column c  "    
+		    + " on c.COLUMN_INFO_ID = t.column_info_id "
+		    + " and c.workflow_id  = t.workflow_id     "
+		    + " and c.cluster_label = t.cluster_label " 
+		    + " where c.column_info_id is null "
+		    + " and (ci.is_numeric_type = false or t.upperbound is null or t.lowerbound is null or "
+		    + "    ((ci.min_val < t.upperbound and ci.max_val > t.lowerbound) and rownum <= 1) "                  
+		    + "   ) ";			
+			
+			/*+ " select  "
+			+ " 	distinct  "
+			+ " 	t.column_info_id, "
+			+ " 	t.workflow_id, "
+			+ " 	t.cluster_no, "
+			+ " 	t.cluster_label    " 
+			+ " 	from ( "
+			+ "        select " 
+			+ "          c.workflow_id      " 
+			+ "          , c.cluster_no    "   
+			+ "          , c.cluster_label "
+			+ "          , case when c.column_info_id = l.child_column_info_id then l.parent_column_info_id else l.child_column_info_id end as column_info_id "
+			+ "          , spn.lowerbound "
+			+ "          , spn.upperbound "
+			+ "      from (select           "
+			+ "            cast(? as varchar(100)) as cluster_label "
+			+ "          , cast(? as bigint)   as workflow_id            "
+			+ "          , cast(? as bigint)  as cluster_no "
+			+ "          , cast(? as double) as bitset_level  "          
+			+ "          , cast(? as double) as lucene_level " 
+			+ "           ) p     "
+			+ "        left outer join link_clustered_column spn "
+			+ "          on spn.workflow_id = p.workflow_id "
+			+ "         and spn.cluster_no = p.cluster_no      "
+			+ "         and spn.cluster_label = p.cluster_label "
+			+ "         and spn.upperbound is not null "
+			+ "        inner join link_clustered_column c   "    
+			+ "          on c.workflow_id = p.workflow_id "
+			+ "         and c.cluster_no = p.cluster_no      "
+			+ "         and c.cluster_label = p.cluster_label "
+			+ "        inner join link l      "
+			+ "         on l.workflow_id =  c.workflow_id "
+			+ "        and c.column_info_id in (l.parent_column_info_id, l.child_column_info_id) "
+			+ "  where (l.bit_set_exact_similarity >= p.bitset_level or p.bitset_level is null) "
+			+ "    and (l.lucine_sample_term_similarity >= p.lucene_level or p.lucene_level is null) "
+			+ " ) t  "
+			+ "   left outer join link_clustered_column c    "  
+			+ "     on c.COLUMN_INFO_ID = t.column_info_id "
+			+ "     and c.workflow_id  = t.workflow_id     "
+			+ "     and c.cluster_label = t.cluster_label " 
+			+ "  left outer join column_info ci  "
+			+ "      on ci.id = t.column_info_id "
+			+ "  left outer join COLUMN_NUMERIC_REAL_TYPE r " 
+			+ "     on r.real_type = ci.real_type "
+			+ " where c.column_info_id is null "
+			+ "  and (r.real_type is null or t.upperbound is null or cast(ci.min_val as double) < t.upperbound )";
+  **/
 
 	static final String deleteClusteredColumn = "delete from link_clustered_column c\n" + " where c.workflow_id = ?\n"
 			+ "   and c.cluster_label = ?";
@@ -87,28 +245,30 @@ public class ClusteringLauncher {
 			+ " values(?,?,?,?)";
 
 	static final String reportClusteredColumnsQuery = " select distinct\n" 
-	        + "    c.cluster_no\n" 
+	        + "    c.cluster_no \n" 
 			//+ " ,l.id,lr.id\n" 
 			+ "     ,l.parent_db_name \n" 
 			+ "     ,l.parent_schema_name \n" 
 			+ "     ,l.parent_table_name \n"
-			+ "     ,l.parent_name \n"  
+			+ "     ,l.parent_name  as parent_column_name\n"  
 			+ "     ,l.child_db_name \n" 
 			+ "     ,l.child_schema_name \n"
 			+ "     ,l.child_table_name \n" 
-			+ "     ,l.child_name \n" 
-			+ "     ,l.bit_set_exact_similarity \n"
-			+ "     ,l.lucine_sample_term_similarity \n" 
-			+ "     ,lr.bit_set_exact_similarity \n"
-			+ "     ,lr.lucine_sample_term_similarity\n"  
+			+ "     ,l.child_name  as child_column_name\n" 
+			+ "     ,l.bit_set_exact_similarity  as BS_CONFIDENCE\n"
+			+ "     ,l.lucine_sample_term_similarity as LC_CONFIDENCE \n" 
+			+ "     ,lr.bit_set_exact_similarity as REV_BS_CONFIDENCE\n"
+			+ "     ,lr.lucine_sample_term_similarity  as REV_LC_CONFIDENCE\n "  
 			+ "     ,p.bitset_level\n"  
 			+ "     ,p.lucene_level\n"  
 			+ "     ,pc.real_type         as parent_real_type \n"
+			+ "     ,pcv.is_numeric_type  as parent_is_numeric_type \n"
 			+ "     ,pc.data_scale        as parent_data_scale \n"
 			+ "     ,pc.max_val           as parent_max \n"
 			+ "     ,pc.min_val           as parent_min \n" 
 			+ "     ,pc.hash_unique_count as parent_huq \n" 
 			+ "     ,cc.real_type         as child_real_type \n"
+			+ "     ,ccv.is_numeric_type  as child_is_numeric_type \n "
 			+ "     ,cc.data_scale        as child_data_scale \n"
 			+ "     ,cc.max_val           as child_max \n"
 			+ "     ,cc.min_val           as child_min \n"
@@ -118,6 +278,8 @@ public class ClusteringLauncher {
 			+ "     inner join link l on c.column_info_id in (l.parent_column_info_id,l.child_column_info_id)\n"
 			+ "     inner join column_info pc on pc.id = l.parent_column_info_id "
 			+ "     inner join column_info cc on cc.id = l.child_column_info_id "
+			+ "     inner join column_info_numeric_range_view pcv on pcv.id = l.parent_column_info_id "
+			+ "     inner join column_info_numeric_range_view ccv on ccv.id = l.child_column_info_id "
 			+ "     left outer join link lr\n" + "       on lr.parent_column_info_id = l.child_column_info_id\n"
 			+ "      and lr.child_column_info_id = l.parent_column_info_id\n"
 			+ "      and lr.workflow_id = l.workflow_id\n" + "where p.workflow_id = ?\n" + " and p.cluster_label = ?\n"
@@ -175,22 +337,24 @@ public class ClusteringLauncher {
    	 "   l.parent_db_name " +
    	 "   ,l.parent_schema_name " +
    	 "   ,l.parent_table_name" +
-   	 "   ,l.parent_name" +
+   	 "   ,l.parent_name as parent_column_name" +
    	 "   ,l.child_db_name" +
    	 "   ,l.child_schema_name" +
    	 "   ,l.child_table_name " +
-   	 "   ,l.child_name " +
-   	 "   ,l.BIT_SET_EXACT_SIMILARITY " +
-   	 "   ,l.LUCINE_SAMPLE_TERM_SIMILARITY " +
-   	 "   ,lr.BIT_SET_EXACT_SIMILARITY " +
-   	 "   ,lr.LUCINE_SAMPLE_TERM_SIMILARITY " +
-     "   ,bs.group_num " +
+   	 "   ,l.child_name as child_column_name" +
+   	 "   ,l.BIT_SET_EXACT_SIMILARITY  as bs_confidence" +
+   	 "   ,l.LUCINE_SAMPLE_TERM_SIMILARITY as lc_confidence" +
+   	 "   ,lr.BIT_SET_EXACT_SIMILARITY as rev_bs_confidence" +
+   	 "   ,lr.LUCINE_SAMPLE_TERM_SIMILARITY as rev_lc_confidence" +
+     "   ,bs.group_num as bitset_group_num" +
      "   ,case when pc.HASH_UNIQUE_COUNT = cc.HASH_UNIQUE_COUNT then 'Y' end as unique_same" +  
 	 "   ,pc.real_type         as parent_real_type \n" +
+     "   ,pcv.is_numeric_type  as parent_is_numeric_type "+
 	 "   ,pc.data_scale        as parent_data_scale \n" + 
 	 "   ,pc.min_val           as parent_min \n" + 
 	 "   ,pc.max_val           as parent_max \n" + 
 	 "   ,pc.hash_unique_count as parent_huq \n" + 
+     "   ,ccv.is_numeric_type  as child_is_numeric_type "+
      "   ,cc.real_type         as child_real_type \n" + 
 	 "   ,cc.data_scale        as child_data_scale \n" + 
 	 "   ,cc.min_val           as child_min \n" + 
@@ -201,22 +365,24 @@ public class ClusteringLauncher {
 	 "   ,l.id " +  
      "   ,lr.id " +    
 	  " from link l" +
-	  " inner join column_info pc on pc.id = l.PARENT_COLUMN_INFO_ID" +
-	  " inner join column_info cc on cc.id = l.CHILD_COLUMN_INFO_ID" +
+	  " inner join column_info pc on pc.id = l.parent_column_info_id " +
+	  " inner join column_info cc on cc.id = l.child_column_info_id " +
+	  " inner join column_info_numeric_range_view pcv on pcv.id = l.parent_column_info_id " +
+	  " inner join column_info_numeric_range_view ccv on ccv.id = l.child_column_info_id " +
 	  " left outer join link_column_group bs" +
 	  "   on bs.scope = 'SAME_BS'" +
 	  "  and bs.workflow_id = l.workflow_id" +
-	  "  and bs.parent_column_info_id = l.parent_column_info_id" + 
+	  "  and bs.parent_column_info_id = l.parent_column_info_id " + 
 	  "  and bs.child_column_info_id = l.child_column_info_id " +
 	  " left outer join link lr" +
 	  "   on lr.workflow_id = l.workflow_id" +
-	  "  and lr.child_column_info_id = l.parent_column_info_id" + 
+	  "  and lr.child_column_info_id = l.parent_column_info_id " + 
 	  "  and lr.parent_column_info_id = l.child_column_info_id " +
 	  " where l.workflow_id = ?   " +
       "  and (lr.id<l.id or lr.id is null) "+
 	  "  order by "+
 	  "  l.parent_db_name,l.parent_schema_name,l.parent_table_name, " +
-	  "  l.child_db_name,l.child_schema_name,l.child_table_name, group_num";
+	  "  l.child_db_name,l.child_schema_name,l.child_table_name, bitset_group_num";
 
 
 	private static void initH2(String url, String uid, String password) throws SQLException, RuntimeException,
@@ -240,7 +406,9 @@ public class ClusteringLauncher {
 		conn = driver.connect("jdbc:h2:" + url, p);
 
 		execSQL("SET AUTOCOMMIT OFF");
+
 		makeTableColStats();
+		makeTableNumericRealType();
 
 
 	}
@@ -494,7 +662,7 @@ public class ClusteringLauncher {
 	private static void createClusters(String clusterLabel, Long workflowId, Float bitsetLevel, Float luceneLevel)
 			throws SQLException {
 		long clusterNo = 0;
-		int updated = 0;
+		int updated = 0, allUpdated = 0;
 
 		if (clusterLabel == null || clusterLabel.isEmpty()) {
 			throw new RuntimeException("Error: Cluster Label has not been specified!");
@@ -513,7 +681,6 @@ public class ClusteringLauncher {
 				PreparedStatement insertParamPS = conn.prepareStatement(insertClusteredColumnParam);) {
 			for (;;) {
 				clusterNo++;
-
 				mainPS.setString(1, clusterLabel);
 				mainPS.setObject(2, workflowId);
 				mainPS.setLong(3, clusterNo);
@@ -522,7 +689,8 @@ public class ClusteringLauncher {
 				updated = mainPS.executeUpdate();
 				if (updated == 0) {
 					conn.rollback();
-
+					clusterNo--;
+					// save params;
 					insertParamPS.setLong(1, workflowId);
 					insertParamPS.setString(2, clusterLabel);
 					insertParamPS.setObject(3, bitsetLevel);
@@ -540,8 +708,9 @@ public class ClusteringLauncher {
 					workingPS.setObject(4, bitsetLevel);
 					workingPS.setObject(5, luceneLevel);
 					updated = workingPS.executeUpdate();
-
-					if (updated < 2) {
+					System.out.println(updated);
+					
+					if (updated == 0) {
 						conn.rollback();
 						break;
 					}
@@ -556,17 +725,16 @@ public class ClusteringLauncher {
 	}
 	
 	static final BigDecimal SequenceDeviationThreshold = new BigDecimal(0.03f);
-	static final BigDecimal BigDecimalOne = new BigDecimal(1);
 	
 	
-	private static boolean ifNumericType(String realType) {
+	/*private static boolean ifNumericType(String realType) {
 		
 		 return "java.lang.Byte".equals(realType) ||
 				"java.lang.Short".equals(realType) ||
 				"java.lang.Integer".equals(realType) ||
 				"java.lang.Long".equals(realType) ||
 				"java.math.BigDecimal".equals(realType);
-	}
+	}*/
 	
 	
 	
@@ -574,7 +742,7 @@ public class ClusteringLauncher {
 		if (hashCount == null) return false;
 		if (minValue == null || maxValue == null) return false;
 		
-		BigDecimal range = maxValue.subtract(minValue).add(BigDecimalOne).abs();
+		BigDecimal range = maxValue.subtract(minValue).add(BigDecimal.ONE).abs();
 		if (range.equals(BigDecimal.ZERO)) {
 			return false;
 		}
@@ -584,7 +752,7 @@ public class ClusteringLauncher {
 	}
 	
 	
-	private static boolean checkIfColumnSequence(Long column_id ) throws SQLException {
+	/*private static boolean checkIfColumnSequence(Long column_id ) throws SQLException {
 		
 		try( PreparedStatement ps = conn.prepareStatement(
 						" select real_type,data_scale,max_val,min_val,hash_unique_count "
@@ -619,7 +787,7 @@ public class ClusteringLauncher {
 			}
 		}
 		return true;
-	}
+	}*/
 	
 	private static ColumnStats calculateColStats(BigDecimal column_id ) throws SQLException, ClassNotFoundException, InstantiationException, IllegalAccessException {
 		Connection targetConnection = null;
@@ -676,7 +844,7 @@ public class ClusteringLauncher {
 		if (targetConnection == null) 
 				throw new RuntimeException(String.format("No connection created for column_info_id = %d; url =%s\n",column_id, url));
 		
-		SparseBitSet sb = new SparseBitSet();
+		SparseBitSet sbp = new SparseBitSet();
 		SparseBitSet sbn = new SparseBitSet();
 		
 		try(PreparedStatement ps = targetConnection.prepareStatement(targetQuery);
@@ -684,36 +852,32 @@ public class ClusteringLauncher {
 			    ps.setFetchSize(50000);
 			while (rs.next()) {
 				BigDecimal value = rs.getBigDecimal(1);
+				
 				if (value == null ) continue;
-				if (value.signum() != -1) { 
-					if (value.scale()>0) {
-						ColumnStats positive = new ColumnStats();
-						targetConnection.close();
-						return positive;
-					} else {
-						sb.set(value.intValueExact());
-					}
+				
+				if (value.scale()>0) {
+					ColumnStats positive = new ColumnStats();
+					targetConnection.close();
+					return positive;
 				}
+				
+				if (value.signum() == -1) 
+					sbn.set(-1*value.intValueExact());
+				 else 
+					sbp.set(value.intValueExact());
 			}
 		}
 		targetConnection.close();
 
-		System.out.println(sb.size());
-		System.out.println(sb.length());
-		System.out.println(sb.cardinality());
-		System.out.println(sb.cardinality()/2);
-		
 
 		long collectiveStep = 0;
-		int curr = 0, prev = -1, medianPosition;
+		int curr = 0, prev = -1;
 		ColumnStats positive = new ColumnStats();
-		if (sb.size() > 1) {
-			int halfSize = (int)(sb.cardinality()/2d);
-			System.out.println(halfSize);
-			
+		if (sbp.size() > 1) {
+			int halfSize = (int)(sbp.cardinality()/2d);
 			int counter = 1;
 			while(true) {
-				curr = sb.nextSetBit(prev+1);
+				curr = sbp.nextSetBit(prev+1);
 				if (curr == -1) break;
 				counter++;
 				if (prev != -1) {
@@ -727,14 +891,14 @@ public class ClusteringLauncher {
 				prev = curr;
 				
 			}
-			double movingMean = collectiveStep / (double)(sb.cardinality()-1);
+			double movingMean = collectiveStep / (double)(sbp.cardinality()-1);
 			System.out.println(positive.median);
 			
 			double collectiveSqrs = 0d; 
 			curr = 0;
 			prev = -1;
 			while(true) {
-				curr = sb.nextSetBit(prev+1);
+				curr = sbp.nextSetBit(prev+1);
 				if (curr == -1) break;
 				if (prev != -1) {
 					int delta = (curr - prev);
@@ -743,7 +907,7 @@ public class ClusteringLauncher {
 				 prev = curr;
 			}
 			positive.movingMean  = new BigDecimal(movingMean);
-			positive.stdDev  = new BigDecimal(Math.sqrt(collectiveSqrs/(double)(sb.cardinality())));
+			positive.stdDev  = new BigDecimal(Math.sqrt(collectiveSqrs/(double)(sbp.cardinality())));
 			System.out.println(positive.stdDev);
 			
 		}
@@ -758,6 +922,27 @@ public class ClusteringLauncher {
 				+ ", median bigint"
 				+ ", constraint column_real_stats_pk primary key (column_id))");
 	}
+	
+	private static void makeTableNumericRealType() throws SQLException {
+		execSQL(
+				" create table if not exists column_numeric_real_type( "
+				+ "	  real_type varchar(255), "
+				+ "	  constraint column_numeric_real_type_pk primary key (real_type) "
+				+ "	); "
+				+ " merge into column_numeric_real_type (real_type) key(real_type) values ('java.lang.Byte'); "
+				+ " merge into column_numeric_real_type (real_type) key(real_type) values ('java.lang.Short'); "
+				+ " merge into column_numeric_real_type (real_type) key(real_type) values ('java.lang.Integer'); "
+				+ " merge into column_numeric_real_type (real_type) key(real_type) values ('java.lang.Long'); "
+				+ " merge into column_numeric_real_type (real_type) key(real_type) values ('java.math.BigDecimal'); "
+				+ " create view if not exists column_info_numeric_range_view as " 
+				+ " select c.id "
+				+ "      ,case when rt.real_type is not null then true else false end as is_numeric_type "
+				+ "      ,cast(case when rt.real_type is not null then c.min_val end as double) as min_val "
+				+ "      ,cast(case when rt.real_type is not null then c.max_val end as double) as max_val "
+				+ " from column_info c "
+				+ "  left outer join column_numeric_real_type rt on rt.real_type = c.real_type "
+    );
+  }
 	
 	private static ColumnStats getColStats(BigDecimal column_id) throws SQLException {
 		ColumnStats result  = null;
@@ -820,14 +1005,16 @@ public class ClusteringLauncher {
 						out.write("<meta http-equiv=Content-Type content='text/html; charset=UTF-8'>");
 						out.write("<STYLE>");
 						out.write(".confidence {mso-number-format:\"0\\.00000\";text-align:right;}");
+						out.write(".integer {mso-number-format:\"0\";text-align:right;}");
+						out.write(".centered {text-align:center;}");
 						out.write("</STYLE>");
 						out.write("</HEADER>");
 						out.write("<BODY>");
 						out.write("<P style='font-weight:bold;'>");
 						out.write("Workflow ID: "); out.text(String.valueOf(workflowId));
 						out.write("; Label: ");		out.text(clusterLabel);
-						out.write("; Bitset Confidence Level: ");		out.textf("%f",rs.getObject(14));
-						out.write("; Lucene Confidence Level: ");		out.textf("%f",rs.getObject(15));
+						out.write("; Bitset Confidence Level: ");		out.textf("%f",rs.getBigDecimal("BITSET_LEVEL"));
+						out.write("; Lucene Confidence Level: ");		out.textf("%f",rs.getBigDecimal("LUCENE_LEVEL"));
 						out.write(";</P>");
 						out.write("<TABLE BORDER>");
 						out.write("<col width=50>"+
@@ -840,9 +1027,19 @@ public class ClusteringLauncher {
 						 "<col width=150>"+
 						 "<col width=175>"+
 						 "<col width=100>"+
-						 "<col width=100 >"+
 						 "<col width=100>"+
-						 "<col width=100>");
+						 "<col width=100>"
+						 +"<col width=100>"
+						 +"<col width=100>"
+						 +"<col width=100>"
+						 +"<col width=100>"
+						 +"<col width=200>"
+						 +"<col width=100>"
+						 +"<col width=100>"
+						 +"<col width=100>"
+						 +"<col width=100>"
+						 +"<col width=200>"
+						 + "");
 						
 						out.write("<TR height=49 width=61 style='height:36.75pt;width:46pt'>");
 						out.element("TH", "Cluster #");
@@ -859,50 +1056,110 @@ public class ClusteringLauncher {
 						out.element("TH", "Lucene confidence");
 						out.element("TH", "Reversal Bitset confidence");
 						out.element("TH", "Reversal Lucene confidence");
+						
+						out.element("TH", "Parent Sequential Integers");
+						out.element("TH", "Parent distinct count");
+						out.element("TH", "Parent min");
+						out.element("TH", "Parent max");
+						out.element("TH", "Parent mapped type");
 
+						out.element("TH", "Child Sequential Integers");
+						out.element("TH", "Child distinct count");
+						out.element("TH", "Child min");
+						out.element("TH", "Child max");
+						out.element("TH", "Child mapped type");
+							
 						out.write("</TR>");
 					}
 					out.write("<TR>");
 
-					// cluster_no
-					out.elementf("TD", "%d", rs.getLong(1));
+					out.elementf("TD", "class='integer'", "%d", rs.getLong("CLUSTER_NO"));
+					out.element("TD", rs.getString("PARENT_DB_NAME"));
+					out.element("TD", rs.getString("PARENT_SCHEMA_NAME"));
+					out.element("TD", rs.getString("PARENT_TABLE_NAME"));
+					out.element("TD", rs.getString("PARENT_COLUMN_NAME"));
 
-					// parent_db_name
-					out.element("TD", rs.getString(2));
-
-					// parent_schema_name
-					out.element("TD", rs.getString(3));
-
-					// parent_table_name
-					out.element("TD", rs.getString(4));
-
-					// parent_column_name
-					out.element("TD", rs.getString(5));
-
-					// child_db_name
-					out.element("TD", rs.getString(6));
-
-					// child_schema_name
-					out.element("TD", rs.getString(7));
-
-					// child_table_name
-					out.element("TD", rs.getString(8));
-
-					// child_column_name
-					out.element("TD", rs.getString(9));
-
+					out.element("TD", rs.getString("CHILD_DB_NAME"));
+					out.element("TD", rs.getString("CHILD_SCHEMA_NAME"));
+					out.element("TD", rs.getString("CHILD_TABLE_NAME"));
+					out.element("TD", rs.getString("CHILD_COLUMN_NAME"));
 					// bit_set_exact_similarity
-					out.elementf("TD","class='confidence'", "%f", rs.getFloat(10));
+					out.elementf("TD","class='confidence'", "%f", rs.getBigDecimal("BS_CONFIDENCE"));
 
 					// lucine_sample_term_similarity
-					out.elementf("TD","class='confidence'", "%f"	, rs.getFloat(11));
+					out.elementf("TD","class='confidence'", "%f"	, rs.getBigDecimal("LC_CONFIDENCE"));
 
 					// rev_bit_set_exact_similarity
-					out.elementf("TD","class='confidence'", "%f", rs.getObject(12));
+					out.elementf("TD","class='confidence'", "%f", rs.getBigDecimal("REV_BS_CONFIDENCE"));
 
 					// rev_lucine_sample_term_similarity
-					out.elementf("TD","class='confidence'", "%f", rs.getObject(13));
+					out.elementf("TD","class='confidence'", "%f", rs.getBigDecimal("REV_LC_CONFIDENCE"));
 
+
+					{
+						  boolean isSeq = rs.getBoolean("PARENT_IS_NUMERIC_TYPE") && 
+								  				rs.getInt("parent_data_scale") == 0;
+						  BigDecimal minValue = null,maxValue = null;
+						  if (isSeq) {
+							  try {
+								   minValue = new BigDecimal(rs.getString("PARENT_MIN"));
+								   maxValue = new BigDecimal(rs.getString("PARENT_MAX"));
+								   isSeq  = minValue.scale() == 0 && maxValue.scale() == 0; 
+							  } catch(NumberFormatException e) {
+								  isSeq = false;
+								  minValue = null;
+								  maxValue = null;
+							  }
+						  }
+						  isSeq = isSeq ? ifSequenceByRange(minValue, maxValue, rs.getBigDecimal("PARENT_HUQ")) : isSeq;
+						  
+						  out.elementf("TD","class='centered'", "%s", (isSeq ? "Y" : null)); 
+					}
+					out.elementf("TD","class='integer'", "%d", rs.getObject("PARENT_HUQ"));
+						
+					if (rs.getBoolean("PARENT_IS_NUMERIC_TYPE")) {
+						out.elementf("TD","class='confidence'", "%s", rs.getString("PARENT_MIN"));
+						out.elementf("TD","class='confidence'", "%s", rs.getString("PARENT_MAX"));
+					} else {
+						out.elementf("TD","class='confidence'", "%s", null);
+						out.elementf("TD","class='confidence'", "%s", null);
+					}
+					out.elementf("TD","class='confidence'", "%s", rs.getString("PARENT_REAL_TYPE"));
+
+					
+
+					{
+						  boolean isSeq = rs.getBoolean("CHILD_IS_NUMERIC_TYPE") && 
+					  				rs.getInt("child_data_scale") == 0;
+						  
+						  BigDecimal minValue = null,maxValue = null;
+						  if (isSeq) {
+							  try {
+								   minValue = new BigDecimal(rs.getString("CHILD_MIN"));
+								   maxValue = new BigDecimal(rs.getString("CHILD_MAX"));
+								   isSeq  = minValue.scale() == 0 && maxValue.scale() == 0; 
+ 							  } catch(NumberFormatException e) {
+								  isSeq = false;
+								  minValue = null;
+								  maxValue = null;
+							  }
+						  }
+						  
+						  isSeq = isSeq ? ifSequenceByRange(minValue, maxValue, rs.getBigDecimal("CHILD_HUQ")) : isSeq;
+
+						  out.elementf("TD","class='centered'", "%s", (isSeq ? "Y" : null)); 
+					}
+					out.elementf("TD","class='integer'", "%d", rs.getObject("CHILD_HUQ"));
+						
+					if (rs.getBoolean("CHILD_IS_NUMERIC_TYPE")) {
+						out.elementf("TD","class='confidence'", "%s", rs.getString("CHILD_MIN"));
+						out.elementf("TD","class='confidence'", "%s", rs.getString("CHILD_MAX"));
+					} else {
+						out.elementf("TD","class='confidence'", "%s", null);
+						out.elementf("TD","class='confidence'", "%s", null);
+					}
+					out.elementf("TD","class='confidence'", "%s", rs.getString("CHILD_REAL_TYPE"));
+					
 					out.write("</TR>");
 
 				}
@@ -1056,66 +1313,46 @@ public class ClusteringLauncher {
 						
 						out.write("<TR>");
 
-						// parent_db_name
-						out.element("TD", rs.getString(1));
+						out.element("TD", rs.getString("PARENT_DB_NAME"));
+						out.element("TD", rs.getString("PARENT_SCHEMA_NAME"));
+						out.element("TD", rs.getString("PARENT_TABLE_NAME"));
+						out.element("TD", rs.getString("PARENT_COLUMN_NAME"));
 
-						// parent_schema_name
-						out.element("TD", rs.getString(2));
-
-						// parent_table_name
-						out.element("TD", rs.getString(3));
-
-						// parent_column_name
-						out.element("TD", rs.getString(4));
-
-						// child_db_name
-						out.element("TD", rs.getString(5));
-
-						// child_schema_name
-						out.element("TD", rs.getString(6));
-
-						// child_table_name
-						out.element("TD", rs.getString(7));
-
-						// child_column_name
-						out.element("TD", rs.getString(8));
+						out.element("TD", rs.getString("CHILD_DB_NAME"));
+						out.element("TD", rs.getString("CHILD_SCHEMA_NAME"));
+						out.element("TD", rs.getString("CHILD_TABLE_NAME"));
+						out.element("TD", rs.getString("CHILD_COLUMN_NAME"));
 
 						// bit_set_exact_similarity
-						out.elementf("TD","class='confidence'", "%f", rs.getObject(9));
+						out.elementf("TD","class='confidence'", "%f", rs.getObject("bs_confidence"));
 
 						// lucine_sample_term_similarity
-						out.elementf("TD","class='confidence'", "%f"	, rs.getObject(10));
+						out.elementf("TD","class='confidence'", "%f"	, rs.getObject("lc_confidence"));
 
 						// rev_bit_set_exact_similarity
-						out.elementf("TD","class='confidence'", "%f", rs.getObject(11));
+						out.elementf("TD","class='confidence'", "%f", rs.getObject("rev_bs_confidence"));
 
 						// rev_lucine_sample_term_similarity
-						out.elementf("TD","class='confidence'", "%f", rs.getObject(12));
+						out.elementf("TD","class='confidence'", "%f", rs.getObject("rev_lc_confidence"));
 
 
 						// Bitset group
-						out.elementf("TD","class='integer'", "%d", rs.getObject(13));
+						out.elementf("TD","class='integer'", "%d", rs.getObject("bitset_group_num"));
 
 						// Distinct count
-						out.element("TD", "class='centered'",rs.getString(14));
+						out.element("TD", "class='centered'",rs.getString("unique_same"));
 						
-						/*if ("CONTRACT_ID".equals( rs.getString(4))) {
-							out.text("-");
-						} */
-					
 						{ 
-							boolean isSeq = ifNumericType(rs.getString(15));
-							BigDecimal minValue = null,maxValue=null;
-							
-							if (isSeq && rs.getInt(16)>0) 
-								isSeq = false;
-								
-								
-							
+							boolean isSeq = rs.getBoolean("parent_is_numeric_type") && rs.getInt("parent_data_scale") == 0;
+							BigDecimal minValue = null, maxValue = null;
+
 							if (isSeq) {
 								try {
-									minValue = new BigDecimal(rs.getString(17));
-									maxValue = new BigDecimal(rs.getString(18));
+									minValue = new BigDecimal(rs.getString("parent_min"));
+									maxValue = new BigDecimal(rs.getString("parent_max"));
+
+									isSeq  = minValue.scale() == 0 && maxValue.scale() == 0; 
+									
 								} catch (NumberFormatException nfe) {
 									isSeq = false;
 									minValue = null;
@@ -1123,38 +1360,35 @@ public class ClusteringLauncher {
 								}
 							}
 							
-							if (isSeq && (minValue.scale()> 0 || maxValue.scale()> 0)) 
-								isSeq = false;
 							
-							if (isSeq && minValue != null && maxValue != null) 
-								if (!ifSequenceByRange(minValue, maxValue, rs.getBigDecimal(19))) 
-									isSeq = false;
+							isSeq = isSeq ? ifSequenceByRange(minValue, maxValue, rs.getBigDecimal("parent_huq"))
+									      : isSeq;   
 								
 							
 							out.element("TD", "class='centered'", (isSeq ? "Y" : null));
 
 							// Parent distinct count
-							out.elementf("TD","class='integer'", "%d", rs.getObject(19));
+							out.elementf("TD","class='integer'", "%d", rs.getObject("parent_huq"));
 
 							
-							if 	(minValue != null && maxValue != null) {
-								out.elementf("TD","class='integer'", "%s", rs.getString(17));
-								out.elementf("TD","class='integer'", "%s", rs.getString(18));
+							if (rs.getBoolean("parent_is_numeric_type")) {
+								out.elementf("TD","class='integer'", "%s", rs.getString("parent_min"));
+								out.elementf("TD","class='integer'", "%s", rs.getString("parent_max"));
 							} else {
 								out.element("TD", null);
 								out.element("TD", null);
 							}
 							
 							
-							if (ifNumericType(rs.getString(15))) {
-							    BigDecimal column_id = rs.getBigDecimal(25); //parent
+							if (rs.getBoolean("parent_is_numeric_type")) {
+							    BigDecimal column_id = rs.getBigDecimal("parent_column_info_id"); //parent
 								ColumnStats stats = getColStats(column_id);
 								if (stats == null) {
 									stats = calculateColStats(column_id);
 									saveColStats(column_id, stats);
 								}
 								//TODO:continue from here
-								out.elementf("TD", "class='integer'", "%d",(stats.median==null?null:stats.median.intValue()));
+								out.elementf("TD", "class='integer'", "%d",(stats.median != null ? stats.median.intValue() : null));
 								out.elementf("TD", "class='confidence'", "%f",stats.movingMean);
 								out.elementf("TD", "class='confidence'", "%f",stats.stdDev);
 							} else {
@@ -1162,25 +1396,22 @@ public class ClusteringLauncher {
 								out.elementf("TD", "", "%s",null);
 								out.elementf("TD", "", "%s",null);
 							}
-							out.element("TD", rs.getString(15));
+							out.element("TD", rs.getString("parent_real_type"));
 
 						}
 						
 						
 
 						{
-							boolean isSeq = ifNumericType(rs.getString(20));
-							BigDecimal minValue = null,maxValue=null;
-							
-							if (isSeq && rs.getInt(21)>0) 
-								isSeq = false;
-								
-								
-							
+							boolean isSeq = rs.getBoolean("child_is_numeric_type") && rs.getInt("child_data_scale") == 0;
+							BigDecimal minValue = null, maxValue = null;
+
 							if (isSeq) {
 								try {
-									minValue = new BigDecimal(rs.getString(22));
-									maxValue = new BigDecimal(rs.getString(23));
+									minValue = new BigDecimal(rs.getString("child_min"));
+									maxValue = new BigDecimal(rs.getString("child_max"));
+									isSeq  = minValue.scale() == 0 && maxValue.scale() == 0; 
+								
 								} catch (NumberFormatException nfe) {
 									isSeq = false;
 									minValue = null;
@@ -1188,42 +1419,39 @@ public class ClusteringLauncher {
 								}
 							}
 							
-							if (isSeq && (minValue.scale()> 0 || maxValue.scale()> 0)) 
-								isSeq = false;
+							isSeq = isSeq ? ifSequenceByRange(minValue, maxValue, rs.getBigDecimal("child_huq"))
+								      : isSeq;   
 							
-							if (isSeq && minValue != null && maxValue != null) 
-								if (!ifSequenceByRange(minValue, maxValue, rs.getBigDecimal(24))) 
-									isSeq = false;
 								
 							out.element("TD", "class='centered'", (isSeq ? "Y" : null));
 							// Child distinct count
-							out.elementf("TD","class='integer'", "%d", rs.getObject(24));
+							out.elementf("TD","class='integer'", "%d", rs.getObject("child_huq"));
 							
-							if 	(minValue != null && maxValue != null) {
-								out.elementf("TD","class='integer'", "%s", rs.getString(22));
-								out.elementf("TD","class='integer'", "%s", rs.getString(23));
+							if 	(rs.getBoolean("child_is_numeric_type")) {
+								out.elementf("TD","class='integer'", "%s", rs.getString("child_min"));
+								out.elementf("TD","class='integer'", "%s", rs.getString("child_max"));
 							} else {
 								out.element("TD", null);
 								out.element("TD", null);
 							}
 
-							if (ifNumericType(rs.getString(20))) {
-							    BigDecimal column_id = rs.getBigDecimal(26); //child
+							if (rs.getBoolean("child_is_numeric_type")) {
+							    BigDecimal column_id = rs.getBigDecimal("child_column_info_id"); //child
 								ColumnStats stats = getColStats(column_id);
 								if (stats == null) {
 									stats = calculateColStats(column_id);
 									saveColStats(column_id, stats);
 								}
 								//TODO:continue from here
-								out.elementf("TD", "class='integer'",    "%d", (stats.median==null?null:stats.median.intValue()));
-								out.elementf("TD", "class='confidence'", "%f",stats.movingMean);
-								out.elementf("TD", "class='confidence'", "%f",stats.stdDev);
+								out.elementf("TD", "class='integer'",    "%d", (stats.median != null ? stats.median.intValue() : null));
+								out.elementf("TD", "class='confidence'", "%f", stats.movingMean);
+								out.elementf("TD", "class='confidence'", "%f", stats.stdDev);
 							} else {
 								out.elementf("TD", "", "%s",null);
 								out.elementf("TD", "", "%s",null);
 								out.elementf("TD", "", "%s",null);
 							}
-							out.element("TD", rs.getString(20));
+							out.element("TD", rs.getString("child_real_type"));
 						}
 					
 						
