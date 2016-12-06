@@ -803,9 +803,9 @@ where workflow_id = 66 and parent_column_info_id = 947
 				+ ", conf.host"
 				+ ", conf.port"
 				+ ", conf.database_name"
-				+ ", col.name"
+				+ ", col.name as column_name"
 				+ ", tab.schema_name"
-				+ ", tab.name"
+				+ ", tab.name as table_name"
 				+ ", col.data_scale"
 				+ " from column_info col "
 				+ "  inner join table_info tab  on tab.id = col.table_info_id "
@@ -817,16 +817,16 @@ where workflow_id = 66 and parent_column_info_id = 947
 			try (ResultSet rs = ps.executeQuery()){
 				while (rs.next()) {
 					String className = null;
-					String uid = rs.getString(2),
-						   pwd = rs.getString(3); 
-					if ("ORACLE".equals(rs.getString(1))) {
-						url = String.format("jdbc:oracle:thin:@%s:%d:%s", rs.getString(4),rs.getInt(5),rs.getString(6));
+					String uid = rs.getString("username"),
+						   pwd = rs.getString("password"); 
+					if ("ORACLE".equals(rs.getString("target"))) {
+						url = String.format("jdbc:oracle:thin:@%s:%d:%s", rs.getString("host"),rs.getInt("port"),rs.getString("database_name"));
 						className = "oracle.jdbc.OracleDriver";
-					} else	if ("SYBASE".equals(rs.getString(1))) {
-						url = String.format("jdbc:jtds:sybase://%s:%d/%s", rs.getString(4),rs.getInt(5),rs.getString(6));
+					} else	if ("SYBASE".equals(rs.getString("target"))) {
+						url = String.format("jdbc:jtds:sybase://%s:%d/%s", rs.getString("host"),rs.getInt("port"),rs.getString("database_name"));
 						className = "net.sourceforge.jtds.jdbc.Driver";
-					} else	if ("MSSQL".equals(rs.getString(1))) {
-						url = String.format("jdbc:jtds:sqlserver://%s:%d/%s", rs.getString(4),rs.getInt(5),rs.getString(6));
+					} else	if ("MSSQL".equals(rs.getString("target"))) {
+						url = String.format("jdbc:jtds:sqlserver://%s:%d/%s", rs.getString("host"),rs.getInt("port"),rs.getString("database_name"));
 						className = "net.sourceforge.jtds.jdbc.Driver";
 					}
 					dataScale = rs.getBigDecimal(10);
@@ -835,8 +835,7 @@ where workflow_id = 66 and parent_column_info_id = 947
 					p.put("user", uid);
 					p.put("password", pwd);
 					targetConnection = driver.connect(url, p);
-					targetQuery = String.format("select %s from %s.%s ",rs.getString(7),rs.getString(8),rs.getString(9));
-					System.out.println(targetQuery);
+					targetQuery = String.format("select %s from %s.%s ",rs.getString("column_name"),rs.getString("table_name"),rs.getString("table_name"));
 					break;
 				}
 			}
