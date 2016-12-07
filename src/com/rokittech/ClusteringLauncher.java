@@ -3,6 +3,7 @@ package com.rokittech;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.math.MathContext;
 import java.net.URLEncoder;
 import java.nio.charset.Charset;
@@ -16,7 +17,13 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Properties;
+
+import org.mapdb.BTreeMap;
+import org.mapdb.DB;
+import org.mapdb.DBMaker;
+import org.mapdb.Serializer;
 
 import com.zaxxer.sparsebits.SparseBitSet;
 
@@ -878,26 +885,45 @@ where workflow_id = 66 and parent_column_info_id = 947
 		}
 		if (targetConnection == null) 
 				throw new RuntimeException(String.format("No connection created for column_info_id = %d; url =%s\n",stats.columnId, url));
-		
-		SparseBitSet sbp = new SparseBitSet();
-		SparseBitSet sbn = new SparseBitSet();
-		
+		SparseBitSet sbp = null;
+		SparseBitSet sbn = null;
+		BigDecimal bucketDivisor = null;
+		if (BucketsCalc) {
+			String sval = parsedArgs.getProperty("bucket");
+			if (sval == null || sval.isEmpty()) {
+				throw new RuntimeException("--bucket parameter is expected");
+			}
+			bucketDivisor = new BigDecimal(sval);
+		}
 		try(PreparedStatement ps = targetConnection.prepareStatement(targetQuery);
+				DB bucketDB = DBMaker.fileDB(String.format("./c%d.mapdb",stats.columnId)).
+						fileMmapEnable().make();
+				BTreeMap<BigDecimal,BigInteger> map = bucketDB.treeMap("c",Serializer.BIG_DECIMAL,Serializer.BIG_INTEGER).create();
 				ResultSet rs = ps.executeQuery()){
 			    ps.setFetchSize(50000);
 			while (rs.next()) {
-				BigDecimal value = rs.getBigDecimal(1);
+				BigDecimal columnValue = rs.getBigDecimal(1);
 				
-				if (value == null ) continue;
+				if (columnValue == null ) continue;
 				
-				if (value.scale()>0) {
+				if (columnValue.scale()>0) {
 					targetConnection.close();
 				}
 				if (movingMeanCalc) {
-					if (value.signum() == -1) 
-						sbn.set(-1*value.intValueExact());
+					if (columnValue.signum() == -1) 
+						sbn.set(-1*columnValue.intValueExact());
 					 else 
-						sbp.set(value.intValueExact());
+						sbp.set(columnValue.intValueExact());
+				}
+				if (BucketsCalc) {
+					BigDecimal mapKey = columnValue.divide(bucketDivisor, BigDecimal.ROUND_CEILING);
+					BigInteger count = map.get(mapKey);
+					if (count == null) {
+						count = BigInteger.ONE;
+					} else {
+						count = count.add(BigInteger.ONE);
+					}
+					map.put(mapKey, count);
 				}
 			}
 		} catch(SQLException e) {
@@ -905,7 +931,7 @@ where workflow_id = 66 and parent_column_info_id = 947
 		}
 		targetConnection.close();
 
-			if (movingMeanCalc) { 
+		if (movingMeanCalc) {
 			long collectiveStep = 0;
 			int curr = 0, prev = -1;
 			if (sbp.size() > 1) {
@@ -924,7 +950,6 @@ where workflow_id = 66 and parent_column_info_id = 947
 						
 					}
 					prev = curr;
-					
 				}
 				double movingMean = collectiveStep / (double)(sbp.cardinality()-1);
 				
@@ -942,6 +967,18 @@ where workflow_id = 66 and parent_column_info_id = 947
 				}
 				stats.movingMean  = new BigDecimal(movingMean);
 				stats.stdDev  = new BigDecimal(Math.sqrt(collectiveSqrs/(double)(sbp.cardinality())));
+			}
+		}
+		if(BucketsCalc) {
+			try(
+					DB bucketDB = DBMaker.fileDB(String.format("./c%d.mapdb",stats.columnId)).fileMmapEnable().readOnly().make();
+					BTreeMap<BigDecimal,BigInteger> map = bucketDB.treeMap("c",Serializer.BIG_DECIMAL,Serializer.BIG_INTEGER).open();
+					) {
+				
+				for (Map.Entry<BigDecimal,BigInteger> entry: map.getEntries()){
+					//TODO:SAVE BUCKETS
+				}
+				
 			}
 		}
 	}
@@ -1483,5 +1520,6 @@ where workflow_id = 66 and parent_column_info_id = 947
 		BigDecimal movingMean;
 		BigDecimal stdDev;
 		BigDecimal median;
+		
 	}
 }
