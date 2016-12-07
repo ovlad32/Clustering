@@ -13,6 +13,8 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.Properties;
 
@@ -176,16 +178,18 @@ where workflow_id = 66 and parent_column_info_id = 947
 		    + " where (l.bit_set_exact_similarity >= p.bitset_level or p.bitset_level is null) "
 		    + " and (l.lucine_sample_term_similarity >= p.lucene_level or p.lucene_level is null) "
 		    + " ) t  "
-		    + " inner  join column_info_numeric_range_view ci " 
-		    + "   on ci.id = t.column_info_id "
+		    + " inner join column_info_numeric_range_view ci " 
+		    + "  on ci.id = t.column_info_id "
 		    + " left outer join link_clustered_column c  "    
-		    + " on c.COLUMN_INFO_ID = t.column_info_id "
+		    + "  on c.column_info_id = t.column_info_id "
 		    + " and c.workflow_id  = t.workflow_id     "
 		    + " and c.cluster_label = t.cluster_label " 
 		    + " where c.column_info_id is null "
-		    + " and (ci.is_numeric_type = false or t.upperbound is null or t.lowerbound is null or "
-		    + "    ((ci.min_val < t.upperbound and ci.max_val > t.lowerbound) and rownum <= 1) "                  
-		    + "   ) ";			
+		    + " and (ci.is_numeric_type = false or "
+		    /*+ "       t.upperbound is null or "
+		    + "       t.lowerbound is null or "*/
+		    + "      ((ci.min_val < t.upperbound and ci.max_val > t.lowerbound) and rownum <= 1) "                  
+		    + "     ) ";			
 			
 			/*+ " select  "
 			+ " 	distinct  "
@@ -262,24 +266,28 @@ where workflow_id = 66 and parent_column_info_id = 947
 			+ "     ,p.bitset_level\n"  
 			+ "     ,p.lucene_level\n"  
 			+ "     ,pc.real_type         as parent_real_type \n"
-			+ "     ,pcv.is_numeric_type  as parent_is_numeric_type \n"
-			+ "     ,pc.data_scale        as parent_data_scale \n"
-			+ "     ,pc.max_val           as parent_max \n"
-			+ "     ,pc.min_val           as parent_min \n" 
-			+ "     ,pc.hash_unique_count as parent_huq \n" 
-			+ "     ,cc.real_type         as child_real_type \n"
-			+ "     ,ccv.is_numeric_type  as child_is_numeric_type \n "
-			+ "     ,cc.data_scale        as child_data_scale \n"
-			+ "     ,cc.max_val           as child_max \n"
-			+ "     ,cc.min_val           as child_min \n"
-			+ "     ,cc.hash_unique_count as child_huq \n" 
+			+ "     ,pc.hash_unique_count as parent_huq \n"
+			+ "     ,case when pcs.column_id is not null then pc.min_val end as parent_min \n"  
+			+ "     ,case when pcs.column_id is not null then pc.max_val end as parent_max \n"  
+		    + "     ,case when pcs.is_sequence then 'Y' end as parent_is_sequence "
+			+ "     ,pcs.std_dev          as parent_std_dev \n" 
+			+ "     ,pcs.moving_mean      as parent_moving_mean \n"  
+			+ "     ,pcs.median           as parent_median \n" 
+		    + "     ,cc.real_type         as child_real_type \n"  
+			+ "     ,cc.hash_unique_count as child_huq \n"
+			+ "     ,case when ccs.column_id is not null then cc.min_val end as child_min \n"  
+			+ "     ,case when ccs.column_id is not null then cc.max_val end as child_max \n"  
+		    + "     ,case when ccs.is_sequence then 'Y' end as child_is_sequence "
+			+ "     ,ccs.moving_mean      as child_moving_mean \n" 
+			+ "     ,ccs.std_dev          as child_std_dev \n" 
+			+ "     ,ccs.median           as child_median \n"  
 			+ "   from link_clustered_column_param p\n"
 			+ "     inner join link_clustered_column c on p.workflow_id = c.workflow_id and p.cluster_label = c.cluster_label\n"
 			+ "     inner join link l on c.column_info_id in (l.parent_column_info_id,l.child_column_info_id)\n"
 			+ "     inner join column_info pc on pc.id = l.parent_column_info_id "
 			+ "     inner join column_info cc on cc.id = l.child_column_info_id "
-			+ "     inner join column_info_numeric_range_view pcv on pcv.id = l.parent_column_info_id "
-			+ "     inner join column_info_numeric_range_view ccv on ccv.id = l.child_column_info_id "
+			+ "     left outer join column_numeric_stats pcs on pcs.column_id = l.parent_column_info_id "
+			+ "     left outer join column_numeric_stats ccs on ccs.column_id = l.child_column_info_id "
 			+ "     left outer join link lr\n" + "       on lr.parent_column_info_id = l.child_column_info_id\n"
 			+ "      and lr.child_column_info_id = l.parent_column_info_id\n"
 			+ "      and lr.workflow_id = l.workflow_id\n" + "where p.workflow_id = ?\n" + " and p.cluster_label = ?\n"
@@ -349,26 +357,30 @@ where workflow_id = 66 and parent_column_info_id = 947
      "   ,bs.group_num as bitset_group_num" +
      "   ,case when pc.HASH_UNIQUE_COUNT = cc.HASH_UNIQUE_COUNT then 'Y' end as unique_same" +  
 	 "   ,pc.real_type         as parent_real_type \n" +
-     "   ,pcv.is_numeric_type  as parent_is_numeric_type "+
-	 "   ,pc.data_scale        as parent_data_scale \n" + 
-	 "   ,pc.min_val           as parent_min \n" + 
-	 "   ,pc.max_val           as parent_max \n" + 
 	 "   ,pc.hash_unique_count as parent_huq \n" + 
-     "   ,ccv.is_numeric_type  as child_is_numeric_type "+
+	 "   ,case when pcs.column_id is not null then pc.min_val end as parent_min \n" + 
+	 "   ,case when pcs.column_id is not null then pc.max_val end as parent_max \n" + 
+     "   ,case when pcs.is_sequence then 'Y' end as parent_is_sequence "+
+	 "   ,pcs.std_dev          as parent_std_dev \n" + 
+	 "   ,pcs.moving_mean      as parent_moving_mean \n" + 
+	 "   ,pcs.median           as parent_median \n" + 
      "   ,cc.real_type         as child_real_type \n" + 
-	 "   ,cc.data_scale        as child_data_scale \n" + 
-	 "   ,cc.min_val           as child_min \n" + 
-	 "   ,cc.max_val           as child_max \n" +
 	 "   ,cc.hash_unique_count as child_huq \n"+ 
- 	 "   ,l.parent_column_info_id \n" +
+	 "   ,case when ccs.column_id is not null then cc.min_val end as child_min \n" + 
+	 "   ,case when ccs.column_id is not null then cc.max_val end as child_max \n" + 
+     "   ,case when ccs.is_sequence then 'Y' end as child_is_sequence "+
+	 "   ,ccs.moving_mean      as child_moving_mean \n" + 
+	 "   ,ccs.std_dev          as child_std_dev \n" + 
+	 "   ,ccs.median           as child_median \n" + 
+	 "   ,l.parent_column_info_id \n" +
 	 "   ,l.child_column_info_id \n" + 
-	 "   ,l.id " +  
-     "   ,lr.id " +    
+	 "   ,l.id as link_id" +  
+     "   ,lr.id as rev_link_id " +    
 	  " from link l" +
 	  " inner join column_info pc on pc.id = l.parent_column_info_id " +
 	  " inner join column_info cc on cc.id = l.child_column_info_id " +
-	  " inner join column_info_numeric_range_view pcv on pcv.id = l.parent_column_info_id " +
-	  " inner join column_info_numeric_range_view ccv on ccv.id = l.child_column_info_id " +
+	  " left outer join column_numeric_stats pcs on pcs.column_id = l.parent_column_info_id " +
+	  " left outer join column_numeric_stats ccs on ccs.column_id = l.child_column_info_id " +
 	  " left outer join link_column_group bs" +
 	  "   on bs.scope = 'SAME_BS'" +
 	  "  and bs.workflow_id = l.workflow_id" +
@@ -406,7 +418,9 @@ where workflow_id = 66 and parent_column_info_id = 947
 		conn = driver.connect("jdbc:h2:" + url, p);
 
 		execSQL("SET AUTOCOMMIT OFF");
-
+		
+		execSQL(columnGroupTableDefinintion);
+		
 		makeTableColStats();
 		makeTableNumericRealType();
 
@@ -469,6 +483,15 @@ where workflow_id = 66 and parent_column_info_id = 947
 				initH2(parsedArgs.getProperty("url"), parsedArgs.getProperty("uid"), parsedArgs.getProperty("pwd"));
 				deleteClusters(parsedArgs.getProperty("label"), longOf(parsedArgs.getProperty("wid")));
 				System.out.println("Done.");
+			} else if ("s".equals(command)) {
+				initH2(parsedArgs.getProperty("url"), parsedArgs.getProperty("uid"), parsedArgs.getProperty("pwd"));
+				List<String> params = new ArrayList<>();
+				params.add("IS_SEQ");
+				if (parsedArgs.getProperty("bucket") == null) {
+					params.add("MOVING_MEAN");
+				}
+				pairStatistics(longOf(parsedArgs.getProperty("wid")), params,parsedArgs);
+				System.out.println("Done.");
 			} else if ("x".equals(command)) {
 				initH2(parsedArgs.getProperty("url"), parsedArgs.getProperty("uid"), parsedArgs.getProperty("pwd"));
 				reportClusters(parsedArgs.getProperty("label"), longOf(parsedArgs.getProperty("wid")),
@@ -509,6 +532,7 @@ where workflow_id = 66 and parent_column_info_id = 947
 		} else if ("x".equals(args[0])) {
 		} else if ("d".equals(args[0])) {
 		} else if ("l".equals(args[0])) {
+		} else if ("s".equals(args[0])) {
 		} else {
 			throw new RuntimeException(String.format("  %s - Invalid command!\n", args[0]));
 		}
@@ -559,6 +583,15 @@ where workflow_id = 66 and parent_column_info_id = 947
 					System.err.printf(" parameter %v does not have a float value !\n", args[index]);
 					ok = false;
 				}
+			} else if ("--bucket".equals(args[index])) {
+				ok = ok || checkExistance(args, index);
+				try {
+					longOf(args[index + 1]);
+					result.put(args[index].substring(2), args[index + 1]);
+				} catch (NumberFormatException e) {
+					System.err.printf(" parameter %v does not have a integer value !\n", args[index]);
+					ok = false;
+				}
 			} else {
 				System.err.printf("parameter %s has not been recognized!\n",args[index]);
 			}
@@ -579,16 +612,18 @@ where workflow_id = 66 and parent_column_info_id = 947
 		System.out.println("   x : eXtract clustered columns to output file");
 		System.out.println("   d : Delete column clusters");
 		System.out.println("   l : List of column cluster labels");
+		System.out.println("   s : Caluclating statistics");
 		System.out.println();
 		System.out.println(" parameters: ");
 		System.out.println("   --url  <string>     : URL to ASTRA H2 DB");
 		System.out.println("   --uid <string>      : user id for ASTRA H2 DB");
 		System.out.println("   --pwd  <string>     : password for ASTRA H2 DB");
-		System.out.println("   --label <string>    : label to use while clustering");
 		System.out.println("   --wid <integer>     : ASTRA workflow ID to process");
-		System.out.println("   --bl <float>        : ASTRA bitset confidence level to process pairs");
-		System.out.println("   --ll <float>        : ASTRA lucene confidence level to process pairs");
-		System.out.println("   --outfile <string>  : output filename");
+		System.out.println("   --label <string>    : Label name for clustering");
+		System.out.println("   --bl <float>        : ASTRA Bitset confidence level of pairs for clustering");
+		System.out.println("   --ll <float>        : ASTRA Lucene confidence level of pairs for clustering");
+		System.out.println("   --bucket <integer>  : Calculating data buckets with width of <integer>");
+		System.out.println("   --outfile <string>  : Output file name");
 		System.out.println();
 		System.out.println(" Examples:");
 		System.out.println("   Clustering.jar c --url tcp://localhost:9092/edm --uid edm --pwd edmedm --wid 42 --label case1 --bl .7 --outfile result.xls");
@@ -789,11 +824,12 @@ where workflow_id = 66 and parent_column_info_id = 947
 		return true;
 	}*/
 	
-	private static ColumnStats calculateColStats(BigDecimal column_id ) throws SQLException, ClassNotFoundException, InstantiationException, IllegalAccessException {
+	private static void calculateColStats(ColumnStats stats,List<String> params,Properties parsedArgs) throws SQLException, ClassNotFoundException, InstantiationException, IllegalAccessException {
 		Connection targetConnection = null;
 		String url = null, targetQuery = null;
 		BigDecimal dataScale = null;
-		
+		boolean movingMeanCalc = params.contains("MOVING_MEAN");
+		boolean BucketsCalc = params.contains("BUCKETS");
 		try (
 		PreparedStatement ps = conn.prepareStatement(
 				"select "
@@ -813,7 +849,7 @@ where workflow_id = 66 and parent_column_info_id = 947
 				+ "  inner join database_config conf on conf.id = mtd.database_config_id "
 				+ " where col.id = ?")
 				) {
-			ps.setLong(1, column_id.longValue());
+			ps.setBigDecimal(1, stats.columnId);
 			try (ResultSet rs = ps.executeQuery()){
 				while (rs.next()) {
 					String className = null;
@@ -829,19 +865,19 @@ where workflow_id = 66 and parent_column_info_id = 947
 						url = String.format("jdbc:jtds:sqlserver://%s:%d/%s", rs.getString("host"),rs.getInt("port"),rs.getString("database_name"));
 						className = "net.sourceforge.jtds.jdbc.Driver";
 					}
-					dataScale = rs.getBigDecimal(10);
+					dataScale = rs.getBigDecimal("data_scale");
 					Driver driver = (Driver) Class.forName(className).newInstance();
 					Properties p = new Properties();
 					p.put("user", uid);
 					p.put("password", pwd);
 					targetConnection = driver.connect(url, p);
-					targetQuery = String.format("select %s from %s.%s ",rs.getString("column_name"),rs.getString("table_name"),rs.getString("table_name"));
+					targetQuery = String.format("select %s from %s.%s ",rs.getString("column_name"),rs.getString("schema_name"),rs.getString("table_name"));
 					break;
 				}
 			}
 		}
 		if (targetConnection == null) 
-				throw new RuntimeException(String.format("No connection created for column_info_id = %d; url =%s\n",column_id, url));
+				throw new RuntimeException(String.format("No connection created for column_info_id = %d; url =%s\n",stats.columnId, url));
 		
 		SparseBitSet sbp = new SparseBitSet();
 		SparseBitSet sbn = new SparseBitSet();
@@ -855,71 +891,71 @@ where workflow_id = 66 and parent_column_info_id = 947
 				if (value == null ) continue;
 				
 				if (value.scale()>0) {
-					ColumnStats positive = new ColumnStats();
 					targetConnection.close();
-					return positive;
 				}
-				
-				if (value.signum() == -1) 
-					sbn.set(-1*value.intValueExact());
-				 else 
-					sbp.set(value.intValueExact());
+				if (movingMeanCalc) {
+					if (value.signum() == -1) 
+						sbn.set(-1*value.intValueExact());
+					 else 
+						sbp.set(value.intValueExact());
+				}
 			}
+		} catch(SQLException e) {
+			throw new RuntimeException("Error while executing query "+targetQuery,e); 
 		}
 		targetConnection.close();
 
-
-		long collectiveStep = 0;
-		int curr = 0, prev = -1;
-		ColumnStats positive = new ColumnStats();
-		if (sbp.size() > 1) {
-			int halfSize = (int)(sbp.cardinality()/2d);
-			int counter = 1;
-			while(true) {
-				curr = sbp.nextSetBit(prev+1);
-				if (curr == -1) break;
-				counter++;
-				if (prev != -1) {
-					collectiveStep += curr - prev;  
-
-					if ( counter > halfSize && positive.median == null) {
-						positive.median = new BigDecimal(prev);
+			if (movingMeanCalc) { 
+			long collectiveStep = 0;
+			int curr = 0, prev = -1;
+			if (sbp.size() > 1) {
+				int halfSize = (int)(sbp.cardinality()/2d);
+				int counter = 1;
+				while(true) {
+					curr = sbp.nextSetBit(prev+1);
+					if (curr == -1) break;
+					counter++;
+					if (prev != -1) {
+						collectiveStep += curr - prev;  
+	
+						if ( counter > halfSize && stats.median == null) {
+							stats.median = new BigDecimal(prev);
+						}
+						
 					}
+					prev = curr;
 					
 				}
-				prev = curr;
+				double movingMean = collectiveStep / (double)(sbp.cardinality()-1);
 				
-			}
-			double movingMean = collectiveStep / (double)(sbp.cardinality()-1);
-			System.out.println(positive.median);
-			
-			double collectiveSqrs = 0d; 
-			curr = 0;
-			prev = -1;
-			while(true) {
-				curr = sbp.nextSetBit(prev+1);
-				if (curr == -1) break;
-				if (prev != -1) {
-					int delta = (curr - prev);
-					collectiveSqrs = collectiveSqrs + Math.pow(movingMean  - (double)delta,2d);
+				double collectiveSqrs = 0d; 
+				curr = 0;
+				prev = -1;
+				while(true) {
+					curr = sbp.nextSetBit(prev+1);
+					if (curr == -1) break;
+					if (prev != -1) {
+						int delta = (curr - prev);
+						collectiveSqrs = collectiveSqrs + Math.pow(movingMean  - (double)delta,2d);
+					}
+					 prev = curr;
 				}
-				 prev = curr;
+				stats.movingMean  = new BigDecimal(movingMean);
+				stats.stdDev  = new BigDecimal(Math.sqrt(collectiveSqrs/(double)(sbp.cardinality())));
 			}
-			positive.movingMean  = new BigDecimal(movingMean);
-			positive.stdDev  = new BigDecimal(Math.sqrt(collectiveSqrs/(double)(sbp.cardinality())));
-			System.out.println(positive.stdDev);
-			
 		}
-		return positive;
 	}
 	
 	private static void makeTableColStats() throws SQLException {
-		execSQL("create table if not exists column_real_stats( "
+		execSQL("create table if not exists column_numeric_stats( "
 				+ "column_id bigint"
-				+ ", movingmean real"
-				+ ", stddev real"
+				+ ", moving_mean real"
+				+ ", std_dev real"
 				+ ", median bigint"
-				+ ", constraint column_real_stats_pk primary key (column_id))");
+				+ ", is_sequence boolean"
+				+ ", num_min_val bigint"
+				+ ", num_max_val bigint"
+				+ ", constraint column_numeric_stats_pk primary key (column_id))");
 	}
 	
 	private static void makeTableNumericRealType() throws SQLException {
@@ -943,37 +979,99 @@ where workflow_id = 66 and parent_column_info_id = 947
     );
   }
 	
-	private static ColumnStats getColStats(BigDecimal column_id) throws SQLException {
+	private static ColumnStats getColStats(BigDecimal columnId) throws SQLException {
 		ColumnStats result  = null;
 		try(PreparedStatement ps = conn.prepareStatement(
-				"select movingmean,stddev,median from column_real_stats where column_id = ? ")) {
-			ps.setLong(1, column_id.longValue());
+				"select moving_mean,std_dev,median,is_sequence,num_min_val,num_max_val from column_numeric_stats where column_id = ? ")) {
+			ps.setLong(1, columnId.longValue());
 			try (ResultSet rs = ps.executeQuery()) {
 				while (rs.next()) {
 					result = new ColumnStats();
-					result.movingMean = rs.getBigDecimal(1);
-					result.stdDev = rs.getBigDecimal(2);
-					result.median = rs.getBigDecimal(3);
+					result.columnId = columnId;
+					result.movingMean = rs.getBigDecimal("moving_mean");
+					result.stdDev = rs.getBigDecimal("std_dev");
+					result.median = rs.getBigDecimal("median");
+					result.isSequence = rs.getBoolean("is_sequence");
+					result.numMin = rs.getBigDecimal("num_min_val");
+					result.numMax = rs.getBigDecimal("num_max_val");
 				}
 			}
 		}
 		return result;
 	}
 	
-	private static void saveColStats(BigDecimal column_id , ColumnStats stats ) throws SQLException {
+	
+	private static void saveColStats(ColumnStats stats ) throws SQLException {
 		try(PreparedStatement ps = conn.prepareStatement(
-				"merge into column_real_stats(column_id,movingmean,stddev,median) "
+				"merge into column_numeric_stats(column_id,moving_mean,std_dev,median,is_sequence,num_min_val,num_max_val) "
 				+ "key(column_id) "
-				+ "values (?,?,?,?)")) {
-			ps.setBigDecimal(1, column_id);
+				+ "values (?,?,?,?,?,?,?)")) {
+			ps.setBigDecimal(1,stats.columnId);
 			ps.setBigDecimal(2,stats.movingMean);
 			ps.setBigDecimal(3,stats.stdDev);
 			ps.setBigDecimal(4,stats.median);
+			ps.setBoolean(5,stats.isSequence);
+			ps.setBigDecimal(6,stats.numMin);
+			ps.setBigDecimal(7,stats.numMax);
 			ps.execute();
 		}
 		execSQL("Commit");
 	}
+	
+	
+	
+	private static void pairStatistics(Long workflow_id, List<String> params, Properties parsedArgs) throws SQLException, ClassNotFoundException, InstantiationException, IllegalAccessException {
+		boolean found = false;
+		try(
+				PreparedStatement ps = conn.prepareStatement(
+						" select r.id,c.max_val,c.min_val,c.hash_unique_count from ("
+						+ " select parent_column_info_id as id from link l  where l.WORKFLOW_ID = ? "
+						+ "   union "
+						+ "   select child_column_info_id as id from link l  where l.WORKFLOW_ID = ? "
+						+ " ) r inner join COLUMN_INFO_NUMERIC_RANGE_VIEW cv on cv.id = r.id "
+						+ "     inner join column_info c on c.id = r.id "
+						+ " where cv.is_numeric_type=true and nvl(c.data_scale,0) = 0 "
+					)
+				) {
+			ps.setLong(1, workflow_id);
+			ps.setLong(2, workflow_id);
+			try (ResultSet rs = ps.executeQuery()) {
+				while (rs.next()) {
+					found = true;
+					BigDecimal columnId = rs.getBigDecimal("id");
+					ColumnStats stats  = getColStats(columnId);
+					if (stats == null) {
+						stats = new ColumnStats();
+						stats.columnId = columnId;
+					}
+					if (params.contains("IS_SEQ")) {
+						stats.isSequence = Boolean.TRUE;
+							try {
+								stats.numMin = new BigDecimal(rs.getString("min_val"));
+								stats.numMax = new BigDecimal(rs.getString("max_val"));
 
+								stats.isSequence = stats.numMax.scale() == 0 && stats.numMax.scale() == 0; 
+								
+							} catch (NumberFormatException nfe) {
+								stats.isSequence = false;
+								stats.numMin = null;
+								stats.numMax = null;
+							}
+						stats.isSequence = stats.isSequence ? ifSequenceByRange(stats.numMin, stats.numMax, rs.getBigDecimal("hash_unique_count"))
+								      : stats.isSequence ;   
+							
+						saveColStats(stats);
+					}
+					calculateColStats(stats,params,parsedArgs);
+					saveColStats(stats);
+				}
+			}
+		}
+		if (!found) {
+			throw new RuntimeException("No pairs found to process");
+		}
+	}
+	
 	private static void reportClusters(String clusterLabel, Long workflowId, String outFile)
 			throws SQLException, IOException {
 		Locale.setDefault(Locale.US);
@@ -1093,71 +1191,19 @@ where workflow_id = 66 and parent_column_info_id = 947
 
 					// rev_lucine_sample_term_similarity
 					out.elementf("TD","class='confidence'", "%f", rs.getBigDecimal("REV_LC_CONFIDENCE"));
-
-
-					{
-						  boolean isSeq = rs.getBoolean("PARENT_IS_NUMERIC_TYPE") && 
-								  				rs.getInt("parent_data_scale") == 0;
-						  BigDecimal minValue = null,maxValue = null;
-						  if (isSeq) {
-							  try {
-								   minValue = new BigDecimal(rs.getString("PARENT_MIN"));
-								   maxValue = new BigDecimal(rs.getString("PARENT_MAX"));
-								   isSeq  = minValue.scale() == 0 && maxValue.scale() == 0; 
-							  } catch(NumberFormatException e) {
-								  isSeq = false;
-								  minValue = null;
-								  maxValue = null;
-							  }
-						  }
-						  isSeq = isSeq ? ifSequenceByRange(minValue, maxValue, rs.getBigDecimal("PARENT_HUQ")) : isSeq;
-						  
-						  out.elementf("TD","class='centered'", "%s", (isSeq ? "Y" : null)); 
-					}
-					out.elementf("TD","class='integer'", "%d", rs.getObject("PARENT_HUQ"));
-						
-					if (rs.getBoolean("PARENT_IS_NUMERIC_TYPE")) {
-						out.elementf("TD","class='confidence'", "%s", rs.getString("PARENT_MIN"));
-						out.elementf("TD","class='confidence'", "%s", rs.getString("PARENT_MAX"));
-					} else {
-						out.elementf("TD","class='confidence'", "%s", null);
-						out.elementf("TD","class='confidence'", "%s", null);
-					}
-					out.elementf("TD","class='confidence'", "%s", rs.getString("PARENT_REAL_TYPE"));
-
 					
+					out.elementf("TD","class='centered'", "%s", rs.getString("parent_is_sequence")); 
+					out.elementf("TD","class='integer'", "%d", rs.getObject("PARENT_HUQ"));
+					out.elementf("TD","class='confidence'", "%s", rs.getString("PARENT_MIN"));
+					out.elementf("TD","class='confidence'", "%s", rs.getString("PARENT_MAX"));
+					out.elementf("TD","%s", rs.getString("PARENT_REAL_TYPE"));
 
-					{
-						  boolean isSeq = rs.getBoolean("CHILD_IS_NUMERIC_TYPE") && 
-					  				rs.getInt("child_data_scale") == 0;
-						  
-						  BigDecimal minValue = null,maxValue = null;
-						  if (isSeq) {
-							  try {
-								   minValue = new BigDecimal(rs.getString("CHILD_MIN"));
-								   maxValue = new BigDecimal(rs.getString("CHILD_MAX"));
-								   isSeq  = minValue.scale() == 0 && maxValue.scale() == 0; 
- 							  } catch(NumberFormatException e) {
-								  isSeq = false;
-								  minValue = null;
-								  maxValue = null;
-							  }
-						  }
-						  
-						  isSeq = isSeq ? ifSequenceByRange(minValue, maxValue, rs.getBigDecimal("CHILD_HUQ")) : isSeq;
-
-						  out.elementf("TD","class='centered'", "%s", (isSeq ? "Y" : null)); 
-					}
+					out.elementf("TD","class='centered'", "%s", rs.getString("child_is_sequence")); 
 					out.elementf("TD","class='integer'", "%d", rs.getObject("CHILD_HUQ"));
-						
-					if (rs.getBoolean("CHILD_IS_NUMERIC_TYPE")) {
-						out.elementf("TD","class='confidence'", "%s", rs.getString("CHILD_MIN"));
-						out.elementf("TD","class='confidence'", "%s", rs.getString("CHILD_MAX"));
-					} else {
-						out.elementf("TD","class='confidence'", "%s", null);
-						out.elementf("TD","class='confidence'", "%s", null);
-					}
-					out.elementf("TD","class='confidence'", "%s", rs.getString("CHILD_REAL_TYPE"));
+					out.elementf("TD","class='confidence'", "%s", rs.getString("CHILD_MIN"));
+					out.elementf("TD","class='confidence'", "%s", rs.getString("CHILD_MAX"));
+					out.elementf("TD","%s", rs.getString("CHILD_REAL_TYPE"));
+					
 					
 					out.write("</TR>");
 
@@ -1185,7 +1231,7 @@ where workflow_id = 66 and parent_column_info_id = 947
 			if (outFile == null || outFile.isEmpty()) {
 				throw new RuntimeException("Error: Output file has not been specified!");
 			}
-			execSQL(columnGroupTableDefinintion);
+			
 			
 			try(PreparedStatement ps = conn.prepareStatement(deleteSameConfidenceColumnGroups)){
 				ps.setLong(1, workflowId);
@@ -1340,131 +1386,30 @@ where workflow_id = 66 and parent_column_info_id = 947
 
 						// Distinct count
 						out.element("TD", "class='centered'",rs.getString("unique_same"));
-						
-						{ 
-							boolean isSeq = rs.getBoolean("parent_is_numeric_type") && rs.getInt("parent_data_scale") == 0;
-							BigDecimal minValue = null, maxValue = null;
 
-							if (isSeq) {
-								try {
-									minValue = new BigDecimal(rs.getString("parent_min"));
-									maxValue = new BigDecimal(rs.getString("parent_max"));
-
-									isSeq  = minValue.scale() == 0 && maxValue.scale() == 0; 
-									
-								} catch (NumberFormatException nfe) {
-									isSeq = false;
-									minValue = null;
-									maxValue = null;
-								}
-							}
-							
-							
-							isSeq = isSeq ? ifSequenceByRange(minValue, maxValue, rs.getBigDecimal("parent_huq"))
-									      : isSeq;   
-								
-							
-							out.element("TD", "class='centered'", (isSeq ? "Y" : null));
-
-							// Parent distinct count
-							out.elementf("TD","class='integer'", "%d", rs.getObject("parent_huq"));
-
-							
-							if (rs.getBoolean("parent_is_numeric_type")) {
-								out.elementf("TD","class='integer'", "%s", rs.getString("parent_min"));
-								out.elementf("TD","class='integer'", "%s", rs.getString("parent_max"));
-							} else {
-								out.element("TD", null);
-								out.element("TD", null);
-							}
-							
-							
-							if (rs.getBoolean("parent_is_numeric_type")) {
-							    BigDecimal column_id = rs.getBigDecimal("parent_column_info_id"); //parent
-								ColumnStats stats = getColStats(column_id);
-								if (stats == null) {
-									stats = calculateColStats(column_id);
-									saveColStats(column_id, stats);
-								}
-								//TODO:continue from here
-								out.elementf("TD", "class='integer'", "%d",(stats.median != null ? stats.median.intValue() : null));
-								out.elementf("TD", "class='confidence'", "%f",stats.movingMean);
-								out.elementf("TD", "class='confidence'", "%f",stats.stdDev);
-							} else {
-								out.elementf("TD", "", "%s",null);
-								out.elementf("TD", "", "%s",null);
-								out.elementf("TD", "", "%s",null);
-							}
-							out.element("TD", rs.getString("parent_real_type"));
-
-						}
-						
+						out.element("TD", "class='centered'", rs.getString("parent_is_sequence"));
+						out.elementf("TD","class='integer'", "%d", rs.getObject("parent_huq"));
+						out.elementf("TD","class='integer'", "%s", rs.getString("parent_min"));
+						out.elementf("TD","class='integer'", "%s", rs.getString("parent_max"));
+						out.elementf("TD", "class='integer'", "%f",rs.getBigDecimal("parent_median"));
+						out.elementf("TD", "class='integer'", "%f",rs.getBigDecimal("parent_moving_mean"));
+						out.elementf("TD", "class='confidence'", "%f",rs.getBigDecimal("parent_std_dev"));
+						out.element("TD", rs.getString("parent_real_type"));
 						
 
-						{
-							boolean isSeq = rs.getBoolean("child_is_numeric_type") && rs.getInt("child_data_scale") == 0;
-							BigDecimal minValue = null, maxValue = null;
-
-							if (isSeq) {
-								try {
-									minValue = new BigDecimal(rs.getString("child_min"));
-									maxValue = new BigDecimal(rs.getString("child_max"));
-									isSeq  = minValue.scale() == 0 && maxValue.scale() == 0; 
-								
-								} catch (NumberFormatException nfe) {
-									isSeq = false;
-									minValue = null;
-									maxValue = null;
-								}
-							}
-							
-							isSeq = isSeq ? ifSequenceByRange(minValue, maxValue, rs.getBigDecimal("child_huq"))
-								      : isSeq;   
-							
-								
-							out.element("TD", "class='centered'", (isSeq ? "Y" : null));
-							// Child distinct count
-							out.elementf("TD","class='integer'", "%d", rs.getObject("child_huq"));
-							
-							if 	(rs.getBoolean("child_is_numeric_type")) {
-								out.elementf("TD","class='integer'", "%s", rs.getString("child_min"));
-								out.elementf("TD","class='integer'", "%s", rs.getString("child_max"));
-							} else {
-								out.element("TD", null);
-								out.element("TD", null);
-							}
-
-							if (rs.getBoolean("child_is_numeric_type")) {
-							    BigDecimal column_id = rs.getBigDecimal("child_column_info_id"); //child
-								ColumnStats stats = getColStats(column_id);
-								if (stats == null) {
-									stats = calculateColStats(column_id);
-									saveColStats(column_id, stats);
-								}
-								//TODO:continue from here
-								out.elementf("TD", "class='integer'",    "%d", (stats.median != null ? stats.median.intValue() : null));
-								out.elementf("TD", "class='confidence'", "%f", stats.movingMean);
-								out.elementf("TD", "class='confidence'", "%f", stats.stdDev);
-							} else {
-								out.elementf("TD", "", "%s",null);
-								out.elementf("TD", "", "%s",null);
-								out.elementf("TD", "", "%s",null);
-							}
-							out.element("TD", rs.getString("child_real_type"));
-						}
-					
-						
-						
-						
-						
-						
-						
-						
+						out.element("TD", "class='centered'", rs.getString("child_is_sequence"));
+						out.elementf("TD","class='integer'", "%d", rs.getObject("child_huq"));
+						out.elementf("TD","class='integer'", "%s", rs.getString("child_min"));
+						out.elementf("TD","class='integer'", "%s", rs.getString("child_max"));
+						out.elementf("TD", "class='integer'", "%f",rs.getBigDecimal("child_median"));
+						out.elementf("TD", "class='confidence'", "%f",rs.getBigDecimal("child_moving_mean"));
+						out.elementf("TD", "class='confidence'", "%f",rs.getBigDecimal("child_std_dev"));
+						out.element("TD", rs.getString("child_real_type"));
 						
 						//Link Id
-						out.elementf("TD","class='integer'", "%d", rs.getObject(27));
+						out.elementf("TD","class='integer'", "%d", rs.getObject("link_id"));
 						//Reversal Link Id
-						out.elementf("TD","class='integer'", "%d", rs.getObject(28));
+						out.elementf("TD","class='integer'", "%d", rs.getObject("rev_link_id"));
 
 						out.write("</TR>");
 
@@ -1531,8 +1476,12 @@ where workflow_id = 66 and parent_column_info_id = 947
 
 	}
 	private static class ColumnStats {
+		BigDecimal columnId;
+		Boolean isSequence;
+		BigDecimal numMin;
+		BigDecimal numMax;
 		BigDecimal movingMean;
 		BigDecimal stdDev;
-		BigDecimal   median;
+		BigDecimal median;
 	}
 }
