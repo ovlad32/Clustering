@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
+import java.util.TreeMap;
 
 import org.mapdb.BTreeMap;
 import org.mapdb.DB;
@@ -494,8 +495,9 @@ where workflow_id = 66 and parent_column_info_id = 947
 				initH2(parsedArgs.getProperty("url"), parsedArgs.getProperty("uid"), parsedArgs.getProperty("pwd"));
 				List<String> params = new ArrayList<>();
 				params.add("IS_SEQ");
-				if (parsedArgs.getProperty("bucket") == null) {
-					params.add("MOVING_MEAN");
+				params.add("MOVING_MEAN");
+				if (parsedArgs.getProperty("bucket") != null) {
+					params.add("BUCKETS");
 				}
 				pairStatistics(longOf(parsedArgs.getProperty("wid")), params,parsedArgs);
 				System.out.println("Done.");
@@ -836,7 +838,7 @@ where workflow_id = 66 and parent_column_info_id = 947
 		String url = null, targetQuery = null;
 		BigDecimal dataScale = null;
 		boolean movingMeanCalc = params.contains("MOVING_MEAN");
-		boolean BucketsCalc = params.contains("BUCKETS");
+		boolean BucketsCalc = params.contains("BUCKETS") && !stats.isSequence;
 		try (
 		PreparedStatement ps = conn.prepareStatement(
 				"select "
@@ -885,20 +887,24 @@ where workflow_id = 66 and parent_column_info_id = 947
 		}
 		if (targetConnection == null) 
 				throw new RuntimeException(String.format("No connection created for column_info_id = %d; url =%s\n",stats.columnId, url));
-		SparseBitSet sbp = null;
-		SparseBitSet sbn = null;
+		SparseBitSet sbp = new SparseBitSet();
+		SparseBitSet sbn = new SparseBitSet();
 		BigDecimal bucketDivisor = null;
+		Map<BigDecimal,BigInteger> buckets = null; 
+		
 		if (BucketsCalc) {
 			String sval = parsedArgs.getProperty("bucket");
 			if (sval == null || sval.isEmpty()) {
 				throw new RuntimeException("--bucket parameter is expected");
 			}
 			bucketDivisor = new BigDecimal(sval);
+			buckets = new TreeMap<>();
 		}
-		try(PreparedStatement ps = targetConnection.prepareStatement(targetQuery);
-				DB bucketDB = DBMaker.fileDB(String.format("./c%d.mapdb",stats.columnId)).
+		try(PreparedStatement ps = targetConnection.prepareStatement(targetQuery); 
+				/*DB bucketDB = DBMaker.fileDB(String.format("./c%d.mapdb",stats.columnId.longValue())).
 						fileMmapEnable().make();
 				BTreeMap<BigDecimal,BigInteger> map = bucketDB.treeMap("c",Serializer.BIG_DECIMAL,Serializer.BIG_INTEGER).create();
+				*/
 				ResultSet rs = ps.executeQuery()){
 			    ps.setFetchSize(50000);
 			while (rs.next()) {
@@ -917,13 +923,14 @@ where workflow_id = 66 and parent_column_info_id = 947
 				}
 				if (BucketsCalc) {
 					BigDecimal mapKey = columnValue.divide(bucketDivisor, BigDecimal.ROUND_CEILING);
-					BigInteger count = map.get(mapKey);
-					if (count == null) {
-						count = BigInteger.ONE;
+					BigInteger countValue = buckets.get(mapKey);//map.get(mapKey);
+					if (countValue == null) {
+						countValue = BigInteger.ONE;
 					} else {
-						count = count.add(BigInteger.ONE);
+						countValue = countValue.add(BigInteger.ONE);
 					}
-					map.put(mapKey, count);
+					buckets.put(mapKey, countValue);
+					//map.put(mapKey, countValue);
 				}
 			}
 		} catch(SQLException e) {
@@ -970,16 +977,32 @@ where workflow_id = 66 and parent_column_info_id = 947
 			}
 		}
 		if(BucketsCalc) {
-			try(
-					DB bucketDB = DBMaker.fileDB(String.format("./c%d.mapdb",stats.columnId)).fileMmapEnable().readOnly().make();
-					BTreeMap<BigDecimal,BigInteger> map = bucketDB.treeMap("c",Serializer.BIG_DECIMAL,Serializer.BIG_INTEGER).open();
-					) {
+			
+
 				
-				for (Map.Entry<BigDecimal,BigInteger> entry: map.getEntries()){
-					//TODO:SAVE BUCKETS
+				for (Map.Entry<BigDecimal,BigInteger> entry: buckets.entrySet()){
+					try(
+							//DB bucketDB = DBMaker.fileDB(String.format("./c%d.mapdb",stats.columnId)).fileMmapEnable().readOnly().make();
+							//BTreeMap<BigDecimal,BigInteger> map = bucketDB.treeMap("c",Serializer.BIG_DECIMAL,Serializer.BIG_INTEGER).open();
+							PreparedStatement ps = conn.prepareStatement("merge into column_numeric_bucket "
+									+ "(column_id,bucket_width,bucket_no,hits) "
+									+ " key (column_id,bucket_width,bucket_no) "
+									+ "values(?,?,?,?)") 
+							) {
+					ps.setBigDecimal(1, stats.columnId);
+					ps.setLong(2, bucketDivisor.longValue());
+					ps.setBigDecimal(3, entry.getKey());
+					ps.setLong(4, entry.getValue().longValue());
+					
+					System.out.print(entry.getKey());
+					System.out.print(" - ");
+					System.out.println(entry.getValue());
+
+					ps.execute();
+					conn.commit();
+					}
 				}
-				
-			}
+
 		}
 	}
 	
@@ -993,6 +1016,14 @@ where workflow_id = 66 and parent_column_info_id = 947
 				+ ", num_min_val bigint"
 				+ ", num_max_val bigint"
 				+ ", constraint column_numeric_stats_pk primary key (column_id))");
+		
+		execSQL("create table if not exists column_numeric_bucket( "
+				+ " column_id bigint "
+				+ "  ,bucket_width bigint "
+				+ "  ,bucket_no bigint "
+				+ "  ,hits bigint "
+				+ "  ,constraint column_numeric_bucket_pk primary key (column_id,bucket_width,bucket_no) "
+				+ " )");
 	}
 	
 	private static void makeTableNumericRealType() throws SQLException {
