@@ -380,6 +380,8 @@ where workflow_id = 66 and parent_column_info_id = 947
 	 "   ,ccs.moving_mean      as child_moving_mean \n" + 
 	 "   ,ccs.std_dev          as child_std_dev \n" + 
 	 "   ,ccs.median           as child_median \n" + 
+	 "   ,case when pcs.column_id is not null and ccs.column_id is not null "+
+	 "			and not pcs.is_sequence and not ccs.is_sequence then 'Y' end as num_non_seq\n"+
 	 "   ,l.parent_column_info_id \n" +
 	 "   ,l.child_column_info_id \n" + 
 	 "   ,l.id as link_id" +  
@@ -1329,6 +1331,10 @@ where workflow_id = 66 and parent_column_info_id = 947
 							out.write(".integer {mso-number-format:\"0\";text-align:right;}");
 							out.write(".centered {text-align:center;}");
 							out.write("</STYLE>");
+							out.write("<script type=\"text/javascript\" src=\"https://www.gstatic.com/charts/loader.js\"></script>");
+							out.write("<script type=\"text/javascript\">");
+							out.write("google.charts.load('current', {'packages':['corechart']});");
+							out.write("</script>");
 							out.write("</HEADER>");
 							out.write("<BODY>");
 							out.write("<P style='font-weight:bold;'> Workflow ID: ");
@@ -1378,6 +1384,7 @@ where workflow_id = 66 and parent_column_info_id = 947
 							 "<col width=100>"+
 							 "<col width=100>"+
 							 // Ids
+							 "<col width=50>"+
 							 "<col width=50>"+
 							 "<col width=50>"+
 							 "");
@@ -1474,6 +1481,12 @@ where workflow_id = 66 and parent_column_info_id = 947
 						out.elementf("TD", "class='confidence'", "%f",rs.getBigDecimal("child_std_dev"));
 						out.element("TD", rs.getString("child_real_type"));
 						
+						//BT
+						out.write("<TD class='centered'>");
+						if ("Y".equals(rs.getString("num_non_seq"))) {
+							//TODO:BUTTON
+						}
+						out.write("</TD>");
 						//Link Id
 						out.elementf("TD","class='integer'", "%d", rs.getObject("link_id"));
 						//Reversal Link Id

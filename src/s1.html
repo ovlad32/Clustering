@@ -3,27 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <title>Title</title>
-    <style>
-        body {
-            background-color:;
-         }
-         #pairId {
-          background-color:red;
-         }
-
-
-    </style>
     <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
 
     <script type="text/javascript" >
         "use strict";
 
+         google.charts.load('current', {'packages':['corechart']});
          //google.charts.load('current', {'packages':['corechart']});
-         google.charts.load('current', {'packages':['line']});
          google.charts.setOnLoadCallback(init);
 
         let pairs = [
-             {column_name:"AMOUNT",
+             {entry_name:"DB1/CRA.CONTRACT.AMOUNT",
               bucket_width:100,
               buckets:[{bucket_no:100,hits:30},
                        {bucket_no:101,hits:50},
@@ -31,7 +21,7 @@
                        {bucket_no:104,hits:120}
                        ]
               },
-              {column_name:"VALUE",
+              {entry_name:"DB2/MT.LIABILITIES.VALUE",
               bucket_width:100,
               buckets:[{bucket_no:102,hits:130},
                        {bucket_no:104,hits:20},
@@ -49,7 +39,7 @@
 
         data.addColumn('number', "Column data");
         for(let e in pairs) {
-            data.addColumn('number', pairs[e].column_name);
+            data.addColumn('number', pairs[e].entry_name);
 
             for (let b of pairs[e].buckets) {
                 let key = b.bucket_no*pairs[e].bucket_width;
@@ -75,18 +65,18 @@
 
 
         var options = {
-            title: 'Data distribution',
-            curveType: 'function',
-            legend: 'bottom',
+       		title: 'Column pair data distribution',
+       		curveType: 'function',
+       		legend: { position: 'bottom' },
             width: 900,
             height: 500,
-            hAxis: { title: 'data values'},
+            hAxis: { title: 'Data values'},
             vAxis: { title: 'Hits'},
             colors: ['#a52714', '#097138']
         };
 
-        //var chart = new google.visualization.LineChart(document.getElementById('chart'));
-        var chart = new google.charts.Line(document.getElementById('chart'));
+        var chart = new google.visualization.LineChart(document.getElementById('chart'));
+        //var chart = new google.charts.Line(document.getElementById('chart'));
         chart.draw(data, options);
     }
 

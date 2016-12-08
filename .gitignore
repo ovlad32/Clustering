@@ -3,6 +3,6 @@ lib/
 *.files/
 .settings/
 *.jar
-*.html
-*.htm
-*.xls
+./*.html
+./*.htm
+./*.xls
