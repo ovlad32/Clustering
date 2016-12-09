@@ -14,9 +14,13 @@
 
         
 
-    function init(handler){
-		let pairs = handler();
-		
+    function init(dataSource1,dataSource2){
+		let pairs = [];
+		if (dataSource1 != null) 
+			pairs.push(dataSource1());
+		if (dataSource1 != null) 
+				pairs.push(dataSource2());
+		alert(pairs);			
         let prep =  new Map();
         let data = new google.visualization.DataTable();
 
@@ -40,7 +44,9 @@
             let  row = [];
             row.push(k);
             row.push(v["hit_0"]);
-            row.push(v["hit_1"]);
+            if (pairs.length === 2 ) {
+            	row.push(v["hit_1"]);
+            }
             rows.push(row);
         }
 
@@ -48,7 +54,7 @@
 
 
         let options = {
-       		title: 'Column pair data distribution',
+       		title: 'Column '+(pairs.length === 2 ? 'pair ' : '')+'data distribution',
        		curveType: 'function',
        		legend: { position: 'bottom' },
             width: 600,
@@ -64,47 +70,47 @@
         chart.draw(data, options);
     }
  
-    var id55 = function () {
-		return [
-	             {entry_name:"DB1/CRA.CONTRACT.AMOUNT",
+    var id551 = function () {
+		return   {entry_name:"DB1/CRA.CONTRACT.AMOUNT",
 	                 bucket_width:100,
 	                 buckets:[{bucket_no:100,hits:30},
 	                          {bucket_no:101,hits:50},
 	                          {bucket_no:102,hits:70},
 	                          {bucket_no:104,hits:120}
-	                          ]
-	                 },
-	                 {entry_name:"DB2/MT.LIABILITIES.VALUE",
+	                          ],
+	                 };
+    }
+    
+    var id552 = function () {
+		return       {entry_name:"DB2/MT.LIABILITIES.VALUE",
 	                 bucket_width:100,
 	                 buckets:[{bucket_no:102,hits:130},
 	                          {bucket_no:104,hits:20},
 	                          {bucket_no:107,hits:130},
 	                          {bucket_no:109,hits:54},
 	                          ],
-	                 },
-	           ];
+	                 };
 	}
     var id56 = function () {
-		return [
-	             {entry_name:"DB1/CRA.CONTRACT.AMOUNT",
+		return      {entry_name:"DB1/CRA.CONTRACT.AMOUNT",
 	                 bucket_width:100,
 	                 buckets:[{bucket_no:100,hits:30},
 	                          {bucket_no:101,hits:250},
 	                          {bucket_no:102,hits:170},
-	                          {bucket_no:104,hits:120}
-	                          ]
-	                 },
-	                 {entry_name:"DB2/MT.LIABILITIES.VALUE",
-	                 bucket_width:100,
-	                 buckets:[{bucket_no:102,hits:30},
-	                          {bucket_no:104,hits:220},
-	                          {bucket_no:107,hits:130},
-	                          {bucket_no:109,hits:140},
+	                          {bucket_no:104,hits:120},
 	                          ],
-	                 },
-	           ];
+	                 };
 	}
-    
+    /*,
+    {entry_name:"DB2/MT.LIABILITIES.VALUE",
+    bucket_width:100,
+    buckets:[{bucket_no:102,hits:30},
+             {bucket_no:104,hits:220},
+             {bucket_no:107,hits:130},
+             {bucket_no:109,hits:140},
+             ],
+    },
+];*/
     
     
     </script>
@@ -132,8 +138,8 @@
 </head>
 
 <body>
-<input type="button" onclick="init(id55)" value="id 55">
-<input type="button" onclick="init(id56)" value="id 56">
+<input type="button" onclick="init(id551,id552)" value="id 55">
+<input type="button" onclick="init(id56,null)" value="id 56">
 <input type="button" onclick="hide()" value="id 56">
 <div class="modal">
   <div id="chart" class="modal-content">

@@ -18,8 +18,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Properties;
+import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
 
 import org.mapdb.BTreeMap;
 import org.mapdb.DB;
@@ -380,8 +383,8 @@ where workflow_id = 66 and parent_column_info_id = 947
 	 "   ,ccs.moving_mean      as child_moving_mean \n" + 
 	 "   ,ccs.std_dev          as child_std_dev \n" + 
 	 "   ,ccs.median           as child_median \n" + 
-	 "   ,case when pcs.column_id is not null and ccs.column_id is not null "+
-	 "			and not pcs.is_sequence and not ccs.is_sequence then 'Y' end as num_non_seq\n"+
+	 "   ,(select top 1 'buckets'||b1.column_id from column_numeric_bucket b1 where b1.column_id = l.parent_column_info_id) as parent_buckets \n"+
+	 "	 ,(select top 1 'buckets'||b1.column_id from column_numeric_bucket b1 where b1.column_id = l.child_column_info_id) as child_buckets \n"+
 	 "   ,l.parent_column_info_id \n" +
 	 "   ,l.child_column_info_id \n" + 
 	 "   ,l.id as link_id" +  
@@ -840,7 +843,7 @@ where workflow_id = 66 and parent_column_info_id = 947
 		String url = null, targetQuery = null;
 		BigDecimal dataScale = null;
 		boolean movingMeanCalc = params.contains("MOVING_MEAN");
-		boolean BucketsCalc = params.contains("BUCKETS") && !stats.isSequence;
+		boolean BucketsCalc = params.contains("BUCKETS");
 		try (
 		PreparedStatement ps = conn.prepareStatement(
 				"select "
@@ -914,8 +917,8 @@ where workflow_id = 66 and parent_column_info_id = 947
 				
 				if (columnValue == null ) continue;
 				
-				if (columnValue.scale()>0) {
-					targetConnection.close();
+				if (movingMeanCalc && columnValue.scale()>0) {
+					movingMeanCalc = false;
 				}
 				if (movingMeanCalc) {
 					if (columnValue.signum() == -1) 
@@ -924,7 +927,7 @@ where workflow_id = 66 and parent_column_info_id = 947
 						sbp.set(columnValue.intValueExact());
 				}
 				if (BucketsCalc) {
-					BigDecimal mapKey = columnValue.divide(bucketDivisor, BigDecimal.ROUND_CEILING);
+					BigDecimal mapKey = columnValue.divide(bucketDivisor, 0, BigDecimal.ROUND_CEILING);
 					BigInteger countValue = buckets.get(mapKey);//map.get(mapKey);
 					if (countValue == null) {
 						countValue = BigInteger.ONE;
@@ -979,9 +982,6 @@ where workflow_id = 66 and parent_column_info_id = 947
 			}
 		}
 		if(BucketsCalc) {
-			
-
-				
 				for (Map.Entry<BigDecimal,BigInteger> entry: buckets.entrySet()){
 					try(
 							//DB bucketDB = DBMaker.fileDB(String.format("./c%d.mapdb",stats.columnId)).fileMmapEnable().readOnly().make();
@@ -1094,13 +1094,13 @@ where workflow_id = 66 and parent_column_info_id = 947
 		boolean found = false;
 		try(
 				PreparedStatement ps = conn.prepareStatement(
-						" select r.id,c.max_val,c.min_val,c.hash_unique_count from ("
+						" select r.id,c.max_val,c.min_val,c.hash_unique_count, nvl(c.data_scale,0) as data_scale from ("
 						+ " select parent_column_info_id as id from link l  where l.WORKFLOW_ID = ? "
 						+ "   union "
 						+ "   select child_column_info_id as id from link l  where l.WORKFLOW_ID = ? "
 						+ " ) r inner join COLUMN_INFO_NUMERIC_RANGE_VIEW cv on cv.id = r.id "
 						+ "     inner join column_info c on c.id = r.id "
-						+ " where cv.is_numeric_type=true and nvl(c.data_scale,0) = 0 "
+						+ " where cv.is_numeric_type=true "
 					)
 				) {
 			ps.setLong(1, workflow_id);
@@ -1114,14 +1114,12 @@ where workflow_id = 66 and parent_column_info_id = 947
 						stats = new ColumnStats();
 						stats.columnId = columnId;
 					}
-					if (params.contains("IS_SEQ")) {
-						stats.isSequence = Boolean.TRUE;
+					stats.isSequence = new Boolean(rs.getInt("data_scale")==0);
+					if (params.contains("IS_SEQ") && stats.isSequence ) {
 							try {
 								stats.numMin = new BigDecimal(rs.getString("min_val"));
 								stats.numMax = new BigDecimal(rs.getString("max_val"));
-
 								stats.isSequence = stats.numMax.scale() == 0 && stats.numMax.scale() == 0; 
-								
 							} catch (NumberFormatException nfe) {
 								stats.isSequence = false;
 								stats.numMin = null;
@@ -1318,15 +1316,16 @@ where workflow_id = 66 and parent_column_info_id = 947
 			try(PreparedStatement ps = conn.prepareStatement(reportAllColumnPairsQuery)) {
 				ps.setLong(1, workflowId);
 				int counter = 0;
+				Set<Long> bucketColumnIds = new TreeSet<>(); 
 				try (ResultSet rs = ps.executeQuery();
 						HTMLFileWriter out = new HTMLFileWriter(outFile)) {
 					while(rs.next()) {
 						counter++;
 						if (counter == 1) {
-							out.write("<HTML>");
-							out.write("<HEADER>");
-							out.write("<meta http-equiv=Content-Type content='text/html; charset=UTF-8'>");
-							out.write("<STYLE>");
+							out.write("<HTML>\n");
+							out.write("<HEADER>\n");
+							out.write("<meta http-equiv=Content-Type content='text/html; charset=UTF-8'>\n");
+							out.write("<STYLE>\n");
 							out.write(".confidence {\n"
 									+ " mso-number-format:\"0\\.00000\";\n"
 									+ " text-align:right;\n"
@@ -1345,6 +1344,7 @@ where workflow_id = 66 and parent_column_info_id = 947
 								    + "left: 0;\n"
 								    + "top: 0;\n"
 								    + "width: 100%; /* Full width */\n"
+								    + "min-width:1200;\n"
 								    + "height: 100%; /* Full height */\n"
 								    + "overflow: auto; /* Enable scroll if needed */\n"
 								    + "background-color: rgb(0,0,0); /* Fallback color */\n"
@@ -1357,12 +1357,14 @@ where workflow_id = 66 and parent_column_info_id = 947
 								    + "border: 1px solid #888;\n"
 								    + "width: 80%; /* Could be more or less, depending on screen size */\n"
 								    + "}\n");
-							out.write("</STYLE>");
-							out.write("<script type=\"text/javascript\" src=\"https://www.gstatic.com/charts/loader.js\"></script>");
+							out.write("</STYLE>\n");
+							out.write("<script type=\"text/javascript\" src=\"https://www.gstatic.com/charts/loader.js\"></script>\n");
 							out.write("<script type=\"text/javascript\">\n"
 									+ " google.charts.load('current', {'packages':['corechart']});\n"
-									+ " function init(dataSource){"
-									+ "  let pairs = dataSource(); \n"
+									+ " function charts(dataSource1,dataSource2,norm){"
+									+ "  let pairs = []; \n"
+									+ "  if (dataSource1 != null) 	pairs.push(dataSource1()); \n"
+									+ "  if (dataSource2 != null) 	pairs.push(dataSource2()); \n"
 									+ "  let prep=new Map();\n"
 									+ "  let data=new google.visualization.DataTable();\n"
 									+ "  data.addColumn('number','Column data');\n"
@@ -1373,7 +1375,10 @@ where workflow_id = 66 and parent_column_info_id = 947
 									+ "      var bothHits = prep.get(key); \n"
 									+ "      if (bothHits == null) \n"
 									+ "		 	  bothHits = {}; \n"
-									+ "      bothHits['hit_'+e] = b.hits;\n "
+									+ "      if (norm)\n"
+									+ "           bothHits['hit_'+e] = 1;\n "
+									+ "      else \n"
+									+ "           bothHits['hit_'+e] = b.hits;\n "
 									+ "      prep.set(key,bothHits);\n "
 									+ "    }\n"
 									+ "  }\n"
@@ -1382,16 +1387,17 @@ where workflow_id = 66 and parent_column_info_id = 947
 									+ "     let row=[]; \n"
 									+ "     row.push(k); \n"
 									+ "     row.push(v['hit_0']); \n"
-									+ "     row.push(v['hit_1']); \n"
+									+ "     if (pairs.length === 2) row.push(v['hit_1']); \n"
 									+ "     rows.push(row); \n"
 									+ "  } \n"
 									+ "  data.addRows(rows);\n"
 									+ "  var options = {\n"
-									+ "   title: 'Column pair data distribution',\n"
-						       		+ "   curveType: 'function',\n"
+									+ "   title: 'Column '+(pairs.length === 2 ? 'pair ' : '')+' data distribution',\n"
+						       		+ "   /*curveType: 'function',\n*/"
+						       		+ "   is3D: true,\n"
 						       		+ "   legend: { position: 'bottom' },\n"
-						            + "   width: 900,\n"
-						            + "   height: 500,\n"
+						            + "   width: 1200,\n"
+						            + "   height: 800,\n"
 						            + "   hAxis: { title: 'Data values'},\n"
 						            + "   vAxis: { title: 'Hits'},\n"
 						            + "   colors: ['#a52714', '#097138']\n"
@@ -1400,13 +1406,13 @@ where workflow_id = 66 and parent_column_info_id = 947
 						            + "  let chart = new google.visualization.LineChart(document.getElementById('chart'));\n"
 						            + "  chart.draw(data, options);\n"
 						            + "}\n");
-							out.write("</script>");
-							out.write("</HEADER>");
-							out.write("<BODY>");
+							out.write("</script>\n");
+							out.write("</HEADER>\n");
+							out.write("<BODY>\n");
 							out.write("<P style='font-weight:bold;'> Workflow ID: ");
 							out.write(String.valueOf(workflowId));
-							out.write("</P>");
-							out.write("<TABLE BORDER>");
+							out.write("</P>\n");
+							out.write("<TABLE BORDER>\n");
 							out.write(""+
 							//Parent db entry
 							"<col width=100>"+
@@ -1453,7 +1459,8 @@ where workflow_id = 66 and parent_column_info_id = 947
 							 "<col width=50>"+
 							 "<col width=50>"+
 							 "<col width=50>"+
-							 "");
+							 "<col width=50>"+
+							 "\n");
 							
 							out.write("<TR height=49 width=61 style='height:36.75pt;width:46pt'>");
 							out.element("TH", "Parent DB name");
@@ -1491,10 +1498,12 @@ where workflow_id = 66 and parent_column_info_id = 947
 							out.element("TH", "Child standard deviation of moving mean");
 							out.element("TH", "Child mapped type");
 
+							out.element("TH", "Data bucket charts");
+
 							out.element("TH", "Link ID");
 							out.element("TH", "Reversal Link ID");
 
-							out.write("</TR>");
+							out.write("</TR>\n");
 						}
 						
 						out.write("<TR>");
@@ -1548,9 +1557,43 @@ where workflow_id = 66 and parent_column_info_id = 947
 						out.element("TD", rs.getString("child_real_type"));
 						
 						//BT
-						out.write("<TD class='centered'>");
-						if ("Y".equals(rs.getString("num_non_seq"))) {
-							//TODO:BUTTON
+						out.write("<TD class='centered' nowrap>");
+						{ String parent_buckets = rs.getString("parent_buckets");
+						  String child_buckets = rs.getString("child_buckets");
+							if ( parent_buckets != null || child_buckets != null ) {
+								/*out.write("<input type='button' "
+										+ "value='Data bucket" 
+										+	((parent_buckets != null && child_buckets != null)? "s' " : "' ")
+										+ "onClick='charts("
+										+ Objects.toString(parent_buckets, "null")
+										+ "," 
+										+ Objects.toString(child_buckets, "null")
+										+")'/>");*/
+								out.write("<input type='button' "
+								+ "value='Hits" 
+								+	((parent_buckets != null && child_buckets != null)? "(2)' " : "(1)' ")
+								+ "onClick='charts("
+								+ Objects.toString(parent_buckets, "null")
+								+ "," 
+								+ Objects.toString(child_buckets, "null")
+								+ ", false" 
+								+")'/>");
+								out.write("<input type='button' "
+										+ "value='Norm" 
+										+	((parent_buckets != null && child_buckets != null)?"(2)' " : "(1)'")
+										+ "onClick='charts("
+										+ Objects.toString(parent_buckets, "null")
+										+ "," 
+										+ Objects.toString(child_buckets, "null")
+										+ ", true" 
+										+")'/>");
+							}
+							if (parent_buckets != null) { 
+								bucketColumnIds.add(rs.getLong("parent_column_info_id"));
+							}
+							if (child_buckets != null) { 
+								bucketColumnIds.add(rs.getLong("child_column_info_id"));
+							}
 						}
 						out.write("</TD>");
 						//Link Id
@@ -1558,20 +1601,73 @@ where workflow_id = 66 and parent_column_info_id = 947
 						//Reversal Link Id
 						out.elementf("TD","class='integer'", "%d", rs.getObject("rev_link_id"));
 
-						out.write("</TR>");
+						out.write("</TR>\n");
 
 					}
 					out.write("</TABLE>\n");
 					out.write("<div class='modal'><div id='chart' class='modal-content'></div></div>\n");
-					out.write("<script type=\"text/javascript\"> \n"
-					  +" var modal = document.getElementsByClassName('modal')[0];"
+					out.write("<script type=\"text/javascript\"> \n");
+					out.write(" var modal = document.getElementsByClassName('modal')[0];"
 					  +" window.onclick = function(event) { \n"
 					  +"  if (event.target == modal) \n"
 					  +"      modal.style.display = 'none';\n"
-					  +"}\n"
-					  +"</script>");
-					out.write("</BODY>");
-					out.write("</HTML>");
+					  +"}\n");
+					for(Long columnId : bucketColumnIds) {
+						int hitsCounter = 0;
+						try( PreparedStatement psb = conn.prepareStatement(
+								"select  \n"
+								+ "  dc.name as database_name \n"
+								+ "  , t.schema_name as schema_name \n" 
+								+ "  , t.name as table_name \n"
+								+ "  , c.name as column_name \n"
+								+ "  , b.bucket_width \n"
+								+ "  , b.bucket_no, b.hits \n" 
+								+ " from (select p.* \n"
+								+ "      ,(select min(bucket_width)  from column_numeric_bucket b where p.col = b.column_id) as min_width \n"
+								+ " from (select cast(? as bigint) as col) p \n"  
+								+ " ) p2 \n"
+								+ " inner join column_info c on c.id = p2.col \n"
+								+ " inner join table_info t on t.id = c.table_info_id \n"
+								+ " inner join metadata m on m.id  = t.metadata_id \n"
+								+ " inner join database_config dc on dc.id  = m.database_config_id\n"
+								+ " inner join column_numeric_bucket b on b.column_id = p2.col and b.bucket_width = p2.min_width \n"
+								+ " order by bucket_no");){
+							psb.setLong(1, columnId); 
+							try (ResultSet rsb = psb.executeQuery();) {
+								while (rsb.next()) {
+									if (hitsCounter == 0 ) {
+										out.write("buckets");
+										out.write(columnId.toString());
+										out.write(" = function () {\n");
+										out.write(" return {\n");
+										out.write(String.format(" entry_name:'%s:%s.%s.%s',\n"
+												,rsb.getString("database_name")
+												,rsb.getString("schema_name")
+												,rsb.getString("table_name")
+												,rsb.getString("column_name")
+												));
+										out.write(String.format(" bucket_width:%d,\n"
+												,rsb.getLong("bucket_width")
+												));
+										out.write(" buckets: [\n");
+									}
+									hitsCounter++;
+									out.write(String.format("    {bucket_no:%d, hits:%d},\n"
+											,rsb.getLong("bucket_no")
+											,rsb.getLong("hits")
+											));
+								}
+								if (hitsCounter >0 ) {
+									out.write("    ]\n  };\n }\n");
+								}
+								
+							}
+							
+						}
+					}
+					out.write("</script>\n");
+					out.write("</BODY>\n");
+					out.write("</HTML>\n");
 				}
 			}
 			System.out.printf("Report has been successfuly written to file %s \n",outFile);
