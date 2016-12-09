@@ -1327,13 +1327,79 @@ where workflow_id = 66 and parent_column_info_id = 947
 							out.write("<HEADER>");
 							out.write("<meta http-equiv=Content-Type content='text/html; charset=UTF-8'>");
 							out.write("<STYLE>");
-							out.write(".confidence {mso-number-format:\"0\\.00000\";text-align:right;}");
-							out.write(".integer {mso-number-format:\"0\";text-align:right;}");
-							out.write(".centered {text-align:center;}");
+							out.write(".confidence {\n"
+									+ " mso-number-format:\"0\\.00000\";\n"
+									+ " text-align:right;\n"
+									+ "}\n"
+									+ ".integer {\n"
+									+ "  mso-number-format:\"0\";\n"
+									+ "  text-align:right;\n"
+									+ "}\n"
+									+ ".centered {\n"
+									+ "  text-align:center;\n"
+									+ "}\n"
+									+ ".modal { \n"
+									+ "display: none; /* Hidden by default */\n"
+									+ "position: fixed; /* Stay in place */\n"
+								    + "z-index: 1; /* Sit on top */\n"
+								    + "left: 0;\n"
+								    + "top: 0;\n"
+								    + "width: 100%; /* Full width */\n"
+								    + "height: 100%; /* Full height */\n"
+								    + "overflow: auto; /* Enable scroll if needed */\n"
+								    + "background-color: rgb(0,0,0); /* Fallback color */\n"
+								    + "background-color: rgba(0,0,0,0.4); /* Black w/ opacity */\n"
+								    + "}\n"
+								    + ".modal-content {\n"
+								    + " background-color: #fefefe;\n"
+								    + "margin: 5% auto; /* % from the top and centered */\n"
+								    + "padding: 20px;\n"
+								    + "border: 1px solid #888;\n"
+								    + "width: 80%; /* Could be more or less, depending on screen size */\n"
+								    + "}\n");
 							out.write("</STYLE>");
 							out.write("<script type=\"text/javascript\" src=\"https://www.gstatic.com/charts/loader.js\"></script>");
-							out.write("<script type=\"text/javascript\">");
-							out.write("google.charts.load('current', {'packages':['corechart']});");
+							out.write("<script type=\"text/javascript\">\n"
+									+ " google.charts.load('current', {'packages':['corechart']});\n"
+									+ " function init(dataSource){"
+									+ "  let pairs = dataSource(); \n"
+									+ "  let prep=new Map();\n"
+									+ "  let data=new google.visualization.DataTable();\n"
+									+ "  data.addColumn('number','Column data');\n"
+									+ "  for(let e in pairs) {"
+									+ "    data.addColumn('number', pairs[e].entry_name);\n"
+									+ "    for (let b of pairs[e].buckets){\n"
+									+ "      let key = b.bucket_no*pairs[e].bucket_width;\n"
+									+ "      var bothHits = prep.get(key); \n"
+									+ "      if (bothHits == null) \n"
+									+ "		 	  bothHits = {}; \n"
+									+ "      bothHits['hit_'+e] = b.hits;\n "
+									+ "      prep.set(key,bothHits);\n "
+									+ "    }\n"
+									+ "  }\n"
+									+ "  let rows = [];\n"
+									+ "  for( var [k,v] of prep) {\n"
+									+ "     let row=[]; \n"
+									+ "     row.push(k); \n"
+									+ "     row.push(v['hit_0']); \n"
+									+ "     row.push(v['hit_1']); \n"
+									+ "     rows.push(row); \n"
+									+ "  } \n"
+									+ "  data.addRows(rows);\n"
+									+ "  var options = {\n"
+									+ "   title: 'Column pair data distribution',\n"
+						       		+ "   curveType: 'function',\n"
+						       		+ "   legend: { position: 'bottom' },\n"
+						            + "   width: 900,\n"
+						            + "   height: 500,\n"
+						            + "   hAxis: { title: 'Data values'},\n"
+						            + "   vAxis: { title: 'Hits'},\n"
+						            + "   colors: ['#a52714', '#097138']\n"
+						            + "  };\n"
+						            + "  modal.style.display='block';"
+						            + "  let chart = new google.visualization.LineChart(document.getElementById('chart'));\n"
+						            + "  chart.draw(data, options);\n"
+						            + "}\n");
 							out.write("</script>");
 							out.write("</HEADER>");
 							out.write("<BODY>");
@@ -1495,7 +1561,15 @@ where workflow_id = 66 and parent_column_info_id = 947
 						out.write("</TR>");
 
 					}
-					out.write("</TABLE>");
+					out.write("</TABLE>\n");
+					out.write("<div class='modal'><div id='chart' class='modal-content'></div></div>\n");
+					out.write("<script type=\"text/javascript\"> \n"
+					  +" var modal = document.getElementsByClassName('modal')[0];"
+					  +" window.onclick = function(event) { \n"
+					  +"  if (event.target == modal) \n"
+					  +"      modal.style.display = 'none';\n"
+					  +"}\n"
+					  +"</script>");
 					out.write("</BODY>");
 					out.write("</HTML>");
 				}

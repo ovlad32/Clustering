@@ -10,32 +10,15 @@
 
          google.charts.load('current', {'packages':['corechart']});
          //google.charts.load('current', {'packages':['corechart']});
-         google.charts.setOnLoadCallback(init);
+       //  google.charts.setOnLoadCallback(init);
 
-        let pairs = [
-             {entry_name:"DB1/CRA.CONTRACT.AMOUNT",
-              bucket_width:100,
-              buckets:[{bucket_no:100,hits:30},
-                       {bucket_no:101,hits:50},
-                       {bucket_no:102,hits:70},
-                       {bucket_no:104,hits:120}
-                       ]
-              },
-              {entry_name:"DB2/MT.LIABILITIES.VALUE",
-              bucket_width:100,
-              buckets:[{bucket_no:102,hits:130},
-                       {bucket_no:104,hits:20},
-                       {bucket_no:107,hits:130},
-                       {bucket_no:109,hits:54},
-                       ],
-              },
-        ]
+        
 
-
-        function init(){
-
-        var prep =  new Map();
-        var data = new google.visualization.DataTable();
+    function init(handler){
+		let pairs = handler();
+		
+        let prep =  new Map();
+        let data = new google.visualization.DataTable();
 
         data.addColumn('number', "Column data");
         for(let e in pairs) {
@@ -53,7 +36,7 @@
         }
 
         let rows = [];
-        for( var [k,v] of prep) {
+        for(let [k,v] of prep) {
             let  row = [];
             row.push(k);
             row.push(v["hit_0"]);
@@ -64,29 +47,97 @@
         data.addRows(rows);
 
 
-        var options = {
+        let options = {
        		title: 'Column pair data distribution',
        		curveType: 'function',
        		legend: { position: 'bottom' },
-            width: 900,
-            height: 500,
+            width: 600,
+            height: 400,
             hAxis: { title: 'Data values'},
             vAxis: { title: 'Hits'},
             colors: ['#a52714', '#097138']
         };
-
-        var chart = new google.visualization.LineChart(document.getElementById('chart'));
+		let divChart = document.getElementById('chart');
+		modal.style.display='block';
+		let  chart = new google.visualization.LineChart(divChart);
         //var chart = new google.charts.Line(document.getElementById('chart'));
         chart.draw(data, options);
     }
-
+ 
+    var id55 = function () {
+		return [
+	             {entry_name:"DB1/CRA.CONTRACT.AMOUNT",
+	                 bucket_width:100,
+	                 buckets:[{bucket_no:100,hits:30},
+	                          {bucket_no:101,hits:50},
+	                          {bucket_no:102,hits:70},
+	                          {bucket_no:104,hits:120}
+	                          ]
+	                 },
+	                 {entry_name:"DB2/MT.LIABILITIES.VALUE",
+	                 bucket_width:100,
+	                 buckets:[{bucket_no:102,hits:130},
+	                          {bucket_no:104,hits:20},
+	                          {bucket_no:107,hits:130},
+	                          {bucket_no:109,hits:54},
+	                          ],
+	                 },
+	           ];
+	}
+    var id56 = function () {
+		return [
+	             {entry_name:"DB1/CRA.CONTRACT.AMOUNT",
+	                 bucket_width:100,
+	                 buckets:[{bucket_no:100,hits:30},
+	                          {bucket_no:101,hits:250},
+	                          {bucket_no:102,hits:170},
+	                          {bucket_no:104,hits:120}
+	                          ]
+	                 },
+	                 {entry_name:"DB2/MT.LIABILITIES.VALUE",
+	                 bucket_width:100,
+	                 buckets:[{bucket_no:102,hits:30},
+	                          {bucket_no:104,hits:220},
+	                          {bucket_no:107,hits:130},
+	                          {bucket_no:109,hits:140},
+	                          ],
+	                 },
+	           ];
+	}
+    
+    
+    
     </script>
+    <style>
+    .modal {
+	    display: none; /* Hidden by default */
+	    position: fixed; /* Stay in place */
+	    z-index: 1; /* Sit on top */
+	    left: 0;
+	    top: 0;
+	    width: 100%; /* Full width */
+	    height: 100%; /* Full height */
+	    overflow: auto; /* Enable scroll if needed */
+	    background-color: rgb(0,0,0); /* Fallback color */
+	    background-color: rgba(0,0,0,0.4); /* Black w/ opacity */
+	}
+	.modal-content {
+	    background-color: #fefefe;
+	    margin: 5% auto; /* 15% from the top and centered */
+	    padding: 20px;
+	    border: 1px solid #888;
+	    width: 80%; /* Could be more or less, depending on screen size */
+	}
+</style>
 </head>
 
 <body>
-
-<div id ="chart" st2yle='width=900; height=500;'>
-
+<input type="button" onclick="init(id55)" value="id 55">
+<input type="button" onclick="init(id56)" value="id 56">
+<input type="button" onclick="hide()" value="id 56">
+<div class="modal">
+  <div id="chart" class="modal-content">
+  </div>
 </div>
 <!--
  <canvas id="pairId"/>
@@ -94,5 +145,15 @@
     window.addEventListener('load',init,false)
 </script>
 -->
+<script type="text/javascript">
+var modal = document.getElementsByClassName('modal')[0];
+
+window.onclick = function(event) {
+    if (event.target == modal) {
+        modal.style.display = "none";
+    }
+}
+
+</script>
 </body>
 </html>
