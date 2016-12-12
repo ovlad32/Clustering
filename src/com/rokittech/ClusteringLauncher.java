@@ -369,24 +369,55 @@ where workflow_id = 66 and parent_column_info_id = 947
      "   ,case when pc.HASH_UNIQUE_COUNT = cc.HASH_UNIQUE_COUNT then 'Y' end as unique_same" +  
 	 "   ,pc.real_type         as parent_real_type \n" +
 	 "   ,pc.hash_unique_count as parent_huq \n" + 
+	 "   ,case when pcs.column_id is not null then pc.data_scale end as parent_data_scale \n" + 
 	 "   ,case when pcs.column_id is not null then pc.min_val end as parent_min \n" + 
 	 "   ,case when pcs.column_id is not null then pc.max_val end as parent_max \n" + 
      "   ,case when pcs.is_sequence then 'Y' end as parent_is_sequence "+
 	 "   ,pcs.std_dev          as parent_std_dev \n" + 
 	 "   ,pcs.moving_mean      as parent_moving_mean \n" + 
 	 "   ,pcs.median           as parent_median \n" + 
+	 "   ,pcs.position_in_pk   as parent_position_in_constraint \n"+
+	 "   ,pcs.total_in_pk      as parent_total_columns_in_pk\n"+
      "   ,cc.real_type         as child_real_type \n" + 
 	 "   ,cc.hash_unique_count as child_huq \n"+ 
+	 "   ,case when ccs.column_id is not null then cc.data_scale end as child_data_scale \n" + 
 	 "   ,case when ccs.column_id is not null then cc.min_val end as child_min \n" + 
 	 "   ,case when ccs.column_id is not null then cc.max_val end as child_max \n" + 
      "   ,case when ccs.is_sequence then 'Y' end as child_is_sequence "+
 	 "   ,ccs.moving_mean      as child_moving_mean \n" + 
 	 "   ,ccs.std_dev          as child_std_dev \n" + 
 	 "   ,ccs.median           as child_median \n" + 
+	 "   ,ccs.position_in_pk   as child_position_in_constraint \n"+
+	 "   ,ccs.total_in_pk      as child_total_columns_in_pk\n"+
+	 "   ,case when pcs.is_sequence = true "+
+	 "          and ccs.is_sequence = true "+
+	 "          and greatest(pcs.num_max_val, ccs.num_max_val) "+
+	 "              - least(pcs.num_min_val, ccs.num_min_val) <> 0 then "+
+	 "          1.0*(abs(pcs.num_min_val - ccs.num_min_val) + abs(pcs.num_max_val - ccs.num_max_val)) / "+
+	 "            (greatest(pcs.num_max_val, ccs.num_max_val) - "+
+	 "              - least(pcs.num_min_val, ccs.num_min_val) ) end as range_similarity" +
 	 "   ,(select top 1 'buckets'||b1.column_id from column_numeric_bucket b1 where b1.column_id = l.parent_column_info_id) as parent_buckets \n"+
 	 "	 ,(select top 1 'buckets'||b1.column_id from column_numeric_bucket b1 where b1.column_id = l.child_column_info_id) as child_buckets \n"+
 	 "   ,l.parent_column_info_id \n" +
+	 "   ,cc.table_info_id as child_table_info_id \n"+
 	 "   ,l.child_column_info_id \n" + 
+	 "   ,pc.table_info_id as parent_table_info_id \n"+
+	 "   ,case when pcs.position_in_pk is not null and (\n"+
+     "	        select top 1 'Y' from link l1 \n"+
+     "	        inner join column_info cc1 on cc1.id = l1.child_column_info_id \n"+
+     "	        inner join column_info pc1 on pc1.id = l1.parent_column_info_id \n"+
+     "	        where l1.workflow_id = l.workflow_id \n"+
+     "	         and cc1.table_info_id = cc.table_info_id \n"+
+     "	         and pc1.table_info_id = pc.table_info_id \n"+
+     "	         and pc1.id <> l.parent_column_info_id) is null then 'Y' end as parent_pk_only_pair \n"+
+	 "   ,case when ccs.position_in_pk is not null and (\n"+
+     "	        select top 1 'Y' from link l1 \n"+
+     "	        inner join column_info cc1 on cc1.id = l1.child_column_info_id \n"+
+     "	        inner join column_info pc1 on pc1.id = l1.parent_column_info_id \n"+
+     "	        where l1.workflow_id = l.workflow_id \n"+
+     "	         and cc1.table_info_id = cc.table_info_id \n"+
+     "	         and pc1.table_info_id = pc.table_info_id \n"+
+     "	         and cc1.id <> l.child_column_info_id) is null then 'Y' end as child_pk_only_pair \n"+
 	 "   ,l.id as link_id" +  
      "   ,lr.id as rev_link_id " +    
 	  " from link l" +
@@ -1017,6 +1048,8 @@ where workflow_id = 66 and parent_column_info_id = 947
 				+ ", is_sequence boolean"
 				+ ", num_min_val bigint"
 				+ ", num_max_val bigint"
+				+ ", position_in_pk bigint"
+				+ ", total_in_pk bigint"
 				+ ", constraint column_numeric_stats_pk primary key (column_id))");
 		
 		execSQL("create table if not exists column_numeric_bucket( "
@@ -1052,7 +1085,15 @@ where workflow_id = 66 and parent_column_info_id = 947
 	private static ColumnStats getColStats(BigDecimal columnId) throws SQLException {
 		ColumnStats result  = null;
 		try(PreparedStatement ps = conn.prepareStatement(
-				"select moving_mean,std_dev,median,is_sequence,num_min_val,num_max_val from column_numeric_stats where column_id = ? ")) {
+				"select moving_mean"
+				+ ", std_dev"
+				+ ", median"
+				+ ", is_sequence"
+				+ ", num_min_val"
+				+ ", num_max_val "
+				+ ", position_in_pk"
+				+ ", total_in_pk"
+				+ " from column_numeric_stats where column_id = ? ")) {
 			ps.setLong(1, columnId.longValue());
 			try (ResultSet rs = ps.executeQuery()) {
 				while (rs.next()) {
@@ -1064,6 +1105,9 @@ where workflow_id = 66 and parent_column_info_id = 947
 					result.isSequence = rs.getBoolean("is_sequence");
 					result.numMin = rs.getBigDecimal("num_min_val");
 					result.numMax = rs.getBigDecimal("num_max_val");
+					result.positionInPk = rs.getBigDecimal("position_in_pk");
+					result.totalInPk = rs.getBigDecimal("total_in_pk");
+					
 				}
 			}
 		}
@@ -1073,9 +1117,18 @@ where workflow_id = 66 and parent_column_info_id = 947
 	
 	private static void saveColStats(ColumnStats stats ) throws SQLException {
 		try(PreparedStatement ps = conn.prepareStatement(
-				"merge into column_numeric_stats(column_id,moving_mean,std_dev,median,is_sequence,num_min_val,num_max_val) "
-				+ "key(column_id) "
-				+ "values (?,?,?,?,?,?,?)")) {
+				"merge into column_numeric_stats("
+				+ " column_id"
+				+ " ,moving_mean"
+				+ " ,std_dev"
+				+ " ,median"
+				+ " ,is_sequence"
+				+ " ,num_min_val"
+				+ " ,num_max_val"
+				+ " ,position_in_pk"
+				+ " ,total_in_pk"
+				+ ") key(column_id) "
+				+ "values (?,?,?,?,?,?,?,?,?)")) {
 			ps.setBigDecimal(1,stats.columnId);
 			ps.setBigDecimal(2,stats.movingMean);
 			ps.setBigDecimal(3,stats.stdDev);
@@ -1083,6 +1136,8 @@ where workflow_id = 66 and parent_column_info_id = 947
 			ps.setBoolean(5,stats.isSequence);
 			ps.setBigDecimal(6,stats.numMin);
 			ps.setBigDecimal(7,stats.numMax);
+			ps.setBigDecimal(8,stats.positionInPk);
+			ps.setBigDecimal(9,stats.totalInPk);
 			ps.execute();
 		}
 		execSQL("Commit");
@@ -1094,12 +1149,23 @@ where workflow_id = 66 and parent_column_info_id = 947
 		boolean found = false;
 		try(
 				PreparedStatement ps = conn.prepareStatement(
-						" select r.id,c.max_val,c.min_val,c.hash_unique_count, nvl(c.data_scale,0) as data_scale from ("
+						" select r.id"
+						+ "    ,c.max_val"
+						+ "    ,c.min_val"
+						+ "    ,c.hash_unique_count"
+						+ "    ,nvl(c.data_scale,0) as data_scale "
+						+ "    ,cnc.position_in_constraint "
+						+ "    ,case when cn.id is not null then ("
+						+ "           select count(*) from constraint_column_info c1 "
+						+ "           where c1.constraint_info_id = cn.id) end as total_in_pk"
+						+ "   from ("
 						+ " select parent_column_info_id as id from link l  where l.WORKFLOW_ID = ? "
 						+ "   union "
 						+ "   select child_column_info_id as id from link l  where l.WORKFLOW_ID = ? "
 						+ " ) r inner join COLUMN_INFO_NUMERIC_RANGE_VIEW cv on cv.id = r.id "
 						+ "     inner join column_info c on c.id = r.id "
+						+ "     left outer join constraint_column_info cnc on cnc.child_column_id = r.id"
+						+ "     left outer join constraint_info cn on cn.id = cnc.constraint_info_id and cn.constraint_type='PK'"
 						+ " where cv.is_numeric_type=true "
 					)
 				) {
@@ -1115,6 +1181,12 @@ where workflow_id = 66 and parent_column_info_id = 947
 						stats.columnId = columnId;
 					}
 					stats.isSequence = new Boolean(rs.getInt("data_scale")==0);
+					
+					stats.positionInPk = rs.getBigDecimal("position_in_constraint");
+					stats.totalInPk = rs.getBigDecimal("total_in_pk");
+					
+					
+					
 					if (params.contains("IS_SEQ") && stats.isSequence ) {
 							try {
 								stats.numMin = new BigDecimal(rs.getString("min_val"));
@@ -1349,6 +1421,8 @@ where workflow_id = 66 and parent_column_info_id = 947
 								    + "overflow: auto; /* Enable scroll if needed */\n"
 								    + "background-color: rgb(0,0,0); /* Fallback color */\n"
 								    + "background-color: rgba(0,0,0,0.4); /* Black w/ opacity */\n"
+								    + "margin: 0; /* % from the top and centered */\n"
+								    + "padding: 0;\n"
 								    + "}\n"
 								    + ".modal-content {\n"
 								    + " background-color: #fefefe;\n"
@@ -1488,6 +1562,7 @@ where workflow_id = 66 and parent_column_info_id = 947
 							out.element("TH", "Parent moving mean");
 							out.element("TH", "Parent standard deviation of moving mean");
 							out.element("TH", "Parent mapped type");
+							
 
 							out.element("TH", "Child Sequential Integers");
 							out.element("TH", "Child distinct count");
@@ -1498,8 +1573,22 @@ where workflow_id = 66 and parent_column_info_id = 947
 							out.element("TH", "Child standard deviation of moving mean");
 							out.element("TH", "Child mapped type");
 
+							out.element("TH", "Sequence range similarity");
+
 							out.element("TH", "Data bucket charts");
 
+							out.element("TH", "Parent numeric data scale");
+							out.element("TH", "Child numeric data scale");
+							out.element("TH", "Numeric Data scale difference");
+
+							out.element("TH", "Parent position in PK");
+							out.element("TH", "Parent total columns in PK");
+							out.element("TH", "Child position in PK");
+							out.element("TH", "Child total columns in PK");
+							out.element("TH", "Rule#7: PK-PK");
+							
+							out.element("TH", "Rule#8: Against parent PK");
+							out.element("TH", "Rule#8: Against child PK");							                                                                                                                               
 							out.element("TH", "Link ID");
 							out.element("TH", "Reversal Link ID");
 
@@ -1556,6 +1645,8 @@ where workflow_id = 66 and parent_column_info_id = 947
 						out.elementf("TD", "class='confidence'", "%f",rs.getBigDecimal("child_std_dev"));
 						out.element("TD", rs.getString("child_real_type"));
 						
+						out.elementf("TD", "class='confidence'", "%f",rs.getBigDecimal("range_similarity"));
+						
 						//BT
 						out.write("<TD class='centered' nowrap>");
 						{ String parent_buckets = rs.getString("parent_buckets");
@@ -1596,6 +1687,43 @@ where workflow_id = 66 and parent_column_info_id = 947
 							}
 						}
 						out.write("</TD>");
+						
+						{
+							BigDecimal parentDataScale = rs.getBigDecimal("parent_data_scale"),
+								childDataScale = rs.getBigDecimal("child_data_scale");
+						
+							out.elementf("TD","class='integer'", "%d",
+									(parentDataScale!=null ? parentDataScale.intValue() : null));
+							out.elementf("TD","class='integer'", "%d", 
+									(childDataScale!=null ? childDataScale.intValue() : null));
+							out.elementf("TD","class='centered'", "%s", 
+									(parentDataScale != null && childDataScale != null &&
+											parentDataScale.intValue() != childDataScale.intValue()? "Y" :null));
+						}
+						
+						{BigDecimal parentColumnPosInPk = rs.getBigDecimal("parent_position_in_constraint"), 
+								parentTotalColumnsInPk = rs.getBigDecimal("parent_total_columns_in_pk"),
+								childColumnPosInPk = rs.getBigDecimal("child_position_in_constraint"),
+								childTotalColumnsInPk = rs.getBigDecimal("child_total_columns_in_pk");
+							
+							out.elementf("TD","class='integer'", "%d",
+									(parentColumnPosInPk!=null?parentColumnPosInPk.intValue():null));
+							out.elementf("TD","class='integer'", "%d", 
+									(parentTotalColumnsInPk!=null?parentTotalColumnsInPk.intValue():null));
+							
+							out.elementf("TD","class='integer'", "%d",
+									(childColumnPosInPk!=null?childColumnPosInPk.intValue():null));
+							out.elementf("TD","class='integer'", "%d", 
+									(childTotalColumnsInPk!=null?childTotalColumnsInPk.intValue():null));
+							
+							out.elementf("TD","class='centered'", "%s",
+									(parentColumnPosInPk != null && childColumnPosInPk != null &&
+									 parentColumnPosInPk.intValue()>0 && childColumnPosInPk.intValue()>0 ? "Y" : null));
+						}
+
+						out.elementf("TD","class='centered'", "%s", rs.getObject("parent_pk_only_pair"));
+						out.elementf("TD","class='centered'", "%s", rs.getObject("child_pk_only_pair"));
+						
 						//Link Id
 						out.elementf("TD","class='integer'", "%d", rs.getObject("link_id"));
 						//Reversal Link Id
@@ -1731,6 +1859,8 @@ where workflow_id = 66 and parent_column_info_id = 947
 		Boolean isSequence;
 		BigDecimal numMin;
 		BigDecimal numMax;
+		BigDecimal positionInPk;
+		BigDecimal totalInPk;
 		BigDecimal movingMean;
 		BigDecimal stdDev;
 		BigDecimal median;
