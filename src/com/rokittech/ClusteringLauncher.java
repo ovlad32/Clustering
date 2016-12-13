@@ -33,8 +33,8 @@ import com.zaxxer.sparsebits.SparseBitSet;
 
 
 public class ClusteringLauncher {
-	// c --uid edm --pwd edmedm --url tcp://localhost:9092/edm --wid 41 --label
-	// L1 --bl 0.4
+	// Clustering.jar a --url tcp://52.59.69.151:9090/./data/h2/edm --uid edm --pwd edmedm --wid 57 --label L2 --bl 0.1 --outfile res.html 
+		
 	static Connection conn;
 /*
  
@@ -671,7 +671,18 @@ where workflow_id = 66 and parent_column_info_id = 947
 		System.out.println("   --outfile <string>  : Output file name");
 		System.out.println();
 		System.out.println(" Examples:");
-		System.out.println("   Clustering.jar c --url tcp://localhost:9092/edm --uid edm --pwd edmedm --wid 42 --label case1 --bl .7 --outfile result.xls");
+		System.out.println();
+		System.out.println(" - to create clusters:");
+		System.out.println(" Clustering.jar c --url tcp://localhost:9092/edm --uid edm --pwd edmedm --wid 42 --label case1 --bl .7 --ll .3 --outfile result.xls");
+		System.out.println();
+		System.out.println(" - to export clustered pairs:");
+		System.out.println(" Clustering.jar x --url tcp://localhost:9092/edm --uid edm --pwd edmedm --wid 42 --label case1 --outfile clusteredPairs.xls");
+		System.out.println();
+		System.out.println(" - to calculate statistics:");
+		System.out.println(" Clustering.jar s --url tcp://localhost:9092/edm --uid edm --pwd edmedm --wid 42 -bucket 1000");
+		System.out.println();
+		System.out.println(" - to export all pairs:");
+		System.out.println(" Clustering.jar a --url tcp://localhost:9092/edm --uid edm --pwd edmedm --wid 42 --outfile allPairs.xls");
 
 	}
 	
