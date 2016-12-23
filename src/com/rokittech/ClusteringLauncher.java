@@ -493,7 +493,40 @@ where workflow_id = 66 and parent_column_info_id = 947
 
 	}
 
-	public static void main(String[] args) {
+	/*
+	public static void p() throws SQLException {
+		Driver d = new org.postgresql.Driver();
+		Properties props = new Properties();
+		props.setProperty("user", "gpadmin");
+		props.setProperty("password", "pivotal");
+		String sql = "select " +
+				"   t.table_schema   as SCHEMA_NAME " +
+				"   ,t.table_catalog as DATABASE_NAME " +
+				"   ,t.table_name    as NAME " +
+				"   ,'TABLE'::text         as TYPE " +
+				"   ,null::timestamp as CREATED " +
+				"   ,null::timestamp as LAST_DDL_TIME " +
+				"   ,0               as KB " +
+				"  from information_schema.tables as t " +
+				"where t.table_type = 'BASE TABLE' " +
+				"   and t.table_schema = ? ";
+		try(Connection c = d.connect("jdbc:postgresql://10.200.80.143:5432/postgres", props)){
+			try (PreparedStatement ps = c.prepareStatement(sql)){
+				ps.setString(1, "cra");
+				try(ResultSet rs = ps.executeQuery()){
+					while (rs.next()) {
+						for (int i = 1;i<=6; i++)
+							System.out.println(rs.getObject(i));
+					}
+				}
+			}
+		}
+
+	}
+	*/
+	public static void main(String[] args) throws SQLException {
+		
+		
 		try {
 
 			Properties parsedArgs = parseCommandLine(args);
@@ -884,6 +917,7 @@ where workflow_id = 66 and parent_column_info_id = 947
 		Connection targetConnection = null;
 		String url = null, targetQuery = null;
 		BigDecimal dataScale = null;
+		BigDecimal minValue = null,maxValue = null;
 		boolean movingMeanCalc = params.contains("MOVING_MEAN");
 		boolean BucketsCalc = params.contains("BUCKETS");
 		try (
@@ -899,10 +933,13 @@ where workflow_id = 66 and parent_column_info_id = 947
 				+ ", tab.schema_name"
 				+ ", tab.name as table_name"
 				+ ", col.data_scale"
+				+ ", st.num_max_val"
+				+ ", st.num_min_val"
 				+ " from column_info col "
 				+ "  inner join table_info tab  on tab.id = col.table_info_id "
 				+ "  inner join metadata mtd on mtd.id = tab.metadata_id "
 				+ "  inner join database_config conf on conf.id = mtd.database_config_id "
+				+ "  inner join column_numeric_stats st on st.column_id = col.id "
 				+ " where col.id = ?")
 				) {
 			ps.setBigDecimal(1, stats.columnId);
@@ -927,7 +964,10 @@ where workflow_id = 66 and parent_column_info_id = 947
 					p.put("user", uid);
 					p.put("password", pwd);
 					targetConnection = driver.connect(url, p);
-					targetQuery = String.format("select %s from %s.%s ",rs.getString("column_name"),rs.getString("schema_name"),rs.getString("table_name"));
+					targetQuery = String.format("select %s from %s.%s where %1$s is not null",rs.getString("column_name"),rs.getString("schema_name"),rs.getString("table_name"));
+					minValue = rs.getBigDecimal("num_min_val");
+					maxValue = rs.getBigDecimal("num_max_val");
+					
 					break;
 				}
 			}
@@ -936,7 +976,8 @@ where workflow_id = 66 and parent_column_info_id = 947
 				throw new RuntimeException(String.format("No connection created for column_info_id = %d; url =%s\n",stats.columnId, url));
 		SparseBitSet sbp = new SparseBitSet();
 		SparseBitSet sbn = new SparseBitSet();
-		BigDecimal bucketDivisor = null;
+		long bucketDivisor = 0;
+		long shift = 0;
 		Map<BigDecimal,BigInteger> buckets = null; 
 		
 		if (BucketsCalc) {
@@ -944,8 +985,9 @@ where workflow_id = 66 and parent_column_info_id = 947
 			if (sval == null || sval.isEmpty()) {
 				throw new RuntimeException("--bucket parameter is expected");
 			}
-			bucketDivisor = new BigDecimal(sval);
 			buckets = new TreeMap<>();
+			bucketDivisor = (new BigDecimal(sval)).longValue();
+			shift = minValue.longValue()%bucketDivisor;  
 		}
 		try(PreparedStatement ps = targetConnection.prepareStatement(targetQuery); 
 				/*DB bucketDB = DBMaker.fileDB(String.format("./c%d.mapdb",stats.columnId.longValue())).
@@ -969,7 +1011,9 @@ where workflow_id = 66 and parent_column_info_id = 947
 						sbp.set(columnValue.intValueExact());
 				}
 				if (BucketsCalc) {
-					BigDecimal mapKey = columnValue.divide(bucketDivisor, 0, BigDecimal.ROUND_CEILING);
+					float fkey = (columnValue.longValue() - shift)/bucketDivisor;
+					
+					BigDecimal mapKey = new BigDecimal(fkey);
 					BigInteger countValue = buckets.get(mapKey);//map.get(mapKey);
 					if (countValue == null) {
 						countValue = BigInteger.ONE;
@@ -1024,6 +1068,7 @@ where workflow_id = 66 and parent_column_info_id = 947
 			}
 		}
 		if(BucketsCalc) {
+			System.out.println(targetQuery);
 				for (Map.Entry<BigDecimal,BigInteger> entry: buckets.entrySet()){
 					try(
 							//DB bucketDB = DBMaker.fileDB(String.format("./c%d.mapdb",stats.columnId)).fileMmapEnable().readOnly().make();
@@ -1034,7 +1079,7 @@ where workflow_id = 66 and parent_column_info_id = 947
 									+ "values(?,?,?,?)") 
 							) {
 					ps.setBigDecimal(1, stats.columnId);
-					ps.setLong(2, bucketDivisor.longValue());
+					ps.setLong(2, bucketDivisor);
 					ps.setBigDecimal(3, entry.getKey());
 					ps.setLong(4, entry.getValue().longValue());
 					
@@ -1770,6 +1815,7 @@ where workflow_id = 66 and parent_column_info_id = 947
 								+ " inner join metadata m on m.id  = t.metadata_id \n"
 								+ " inner join database_config dc on dc.id  = m.database_config_id\n"
 								+ " inner join column_numeric_bucket b on b.column_id = p2.col and b.bucket_width = p2.min_width \n"
+								//+ " inner join column_numeric_stats st on st.column_id = p2.col \n"
 								+ " order by bucket_no");){
 							psb.setLong(1, columnId); 
 							try (ResultSet rsb = psb.executeQuery();) {
