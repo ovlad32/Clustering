@@ -8,6 +8,8 @@ import java.util.List;
 
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
 
 public abstract class AbstractDbItemProcessor {
 	abstract public String getRootElementName();
@@ -23,7 +25,14 @@ public abstract class AbstractDbItemProcessor {
 	public void process(ResultSet parentResultSet, Element parentRowElement) {
 		List<AbstractDbItemProcessor> subProcessors = getSubProcessors();
 		Document doc = parentRowElement.getOwnerDocument();
-		Element root = doc.createElement(getRootElementName());
+		NodeList nodeList =  parentRowElement.getElementsByTagName(getRootElementName());
+		Node root = null;
+		if (nodeList.getLength()>0)
+			root = nodeList.item(0);
+		else 
+		 	root = doc.createElement(getRootElementName());
+	
+		
 
 		try (PreparedStatement ps1 = parentResultSet.getStatement().getConnection().prepareCall(getQuery())) {
 			int indexParameter = 0;

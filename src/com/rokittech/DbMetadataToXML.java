@@ -57,7 +57,7 @@ public class DbMetadataToXML {
 		result.addAll(fetchSimple(impl, "sequence", "sequence_name", sequenceQuery, null));
 		result.addAll(fetchSimple(impl, "view", "table_name", viewQuery, null));
 
-		result.addAll(fetchSimple(impl, "table", "table_name", tableQuery, Arrays.asList(new ColumnProcessor(),new ConstraintProcessor())));
+		result.addAll(fetchSimple(impl, "table", "table_name", tableQuery, Arrays.asList(new TableColumns(),new Constraints())));
 		return result;
 	}
 
@@ -142,7 +142,7 @@ public class DbMetadataToXML {
 
 	}
 
-	abstract class InternalProcessor extends AbstractDbItemProcessor {
+	abstract class InternalContextProcessor extends AbstractDbItemProcessor {
 		@Override
 		public boolean isNullPresent() {
 			return DbMetadataToXML.this.nullTags;
@@ -154,7 +154,7 @@ public class DbMetadataToXML {
 		}
 	}
 
-	class ColumnProcessor extends InternalProcessor {
+	class TableColumns extends InternalContextProcessor {
 
 		@Override
 		public String getRootElementName() {
@@ -173,7 +173,7 @@ public class DbMetadataToXML {
 
 	}
 
-	class ConstraintProcessor extends InternalProcessor {
+	class Constraints extends InternalContextProcessor {
 
 		@Override
 		public String getRootElementName() {
@@ -192,13 +192,13 @@ public class DbMetadataToXML {
 
 		@Override
 		public List<AbstractDbItemProcessor> getSubProcessors() {
-			return Arrays.asList(new CheckConstraintProcessor(), 
-					new PrimaryOrUniqueKeyColumnListProcessor(),
-					new ConstraintForeignKeyProcessor());
+			return Arrays.asList(new CheckConstraints(), 
+					new PrimaryOrUniqueKeyColumnList (),
+					new ForeignKeyConstraints());
 		}
 	}
 
-	class CheckConstraintProcessor extends InternalProcessor {
+	class CheckConstraints extends InternalContextProcessor {
 
 		@Override
 		public String getRootElementName() {
@@ -216,7 +216,7 @@ public class DbMetadataToXML {
 		}
 	}
 
-	class PrimaryOrUniqueKeyColumnListProcessor extends InternalProcessor {
+	class PrimaryOrUniqueKeyColumnList  extends InternalContextProcessor {
 		@Override
 		public String getRootElementName() {
 			return "key_column_list";
@@ -241,7 +241,7 @@ public class DbMetadataToXML {
 		
 	}
 	
-	class ConstraintForeignKeyProcessor extends InternalProcessor {
+	class ForeignKeyConstraints extends InternalContextProcessor {
 		@Override
 		public String getRootElementName() {
 			return "foreign_key_constraint_details";
@@ -258,11 +258,11 @@ public class DbMetadataToXML {
 		}
 		@Override
 		public List<AbstractDbItemProcessor> getSubProcessors() {
-			return Arrays.asList(new ReferencingColumnsListProcessor());
+			return Arrays.asList(new ReferencingColumnsList());
 		}
 	}
 	
-	class ReferencingColumnsListProcessor extends InternalProcessor {
+	class ReferencingColumnsList extends InternalContextProcessor {
 		@Override
 		public String getRootElementName() {
 			return "referencing_column_list";
@@ -285,4 +285,7 @@ public class DbMetadataToXML {
 			return Arrays.asList("constraint_schema","constraint_name");
 		}
 	}
+	
+	
+	
 }
