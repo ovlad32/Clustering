@@ -16,7 +16,7 @@ public abstract class AbstractDbItemProcessor {
 
 	abstract public String getQuery();
 
-	abstract public boolean isNullPresent();
+	abstract public boolean isTagForNull();
 
 	abstract public List<String> getQueryParameterParentColumns();
 
@@ -55,7 +55,7 @@ public abstract class AbstractDbItemProcessor {
 						Element elem = null;
 						Object value = rs.getObject(columnIndex);
 						if (value == null) {
-							if (isNullPresent()) {
+							if (isTagForNull()) {
 								elem = doc.createElement(rsm.getColumnName(columnIndex));
 								elem.setAttribute("xsi:nil", "true");
 							}
