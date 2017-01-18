@@ -28,30 +28,37 @@ import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 
 public class DbMetadataToXML {
-
+	// connectio to GP
 	private Connection connection;
+	// flag if we want to have tags for null data
 	private boolean isTagForNull = true;
+	// schema name to be grabbed
 	private String schemaName;
-	final private String sequenceQuery = "select s.* from information_schema.sequences s where s.sequence_schema = ? ";
-	final private String viewQuery = "select s.* from information_schema.views s where s.table_schema = ? ";
-	final private String tableQuery = "select s.* from information_schema.tables s where s.table_type='BASE TABLE' and s.table_schema = ? order by table_name ";
-	final private String indexQuery = "select t.* from pg_catalog.pg_indexes t where t.schemaname = ?";
-	final private String preTriggerQuery = 
-			"select concat('select '"
-			+ " ,STRING_AGG(format('t.%I',t.column_name),',' order by t.ordinal_position) "
-			+ ",',STRING_AGG(t.event_manipulation,'','') as event_manipulation '"
-			+ ",' from information_schema.triggers t ' "
-			+ ",' where t.trigger_schema=? ' "
-			+ ",' group by ' "
-			+ ",STRING_AGG(format('t.%I',t.column_name),',' order by t.ordinal_position) "
-			+ "   ) as query_text "
-			+ " from information_schema.columns t "
+	//initial queries
+	private final String sequenceQuery = "select s.* from information_schema.sequences s where s.sequence_schema = ? ";
+	private final String viewQuery = "select s.* from information_schema.views s where s.table_schema = ? ";
+	private final String tableQuery = "select s.* from information_schema.tables s where s.table_type='BASE TABLE' and s.table_schema = ? order by table_name ";
+	private final String indexQuery = "select t.* from pg_catalog.pg_indexes t where t.schemaname = ?";
+    private final String preTriggerQuery =
+			"select 'select t.trigger_name||'' on ''||t.event_object_schema||''.''||t.event_object_table as trigger_name_for_astra,'|| "
+			+ "   STRING_AGG(t.column_name,',' order by t.ordinal_position)|| "
+			+ "  ',STRING_AGG(t.event_manipulation,'','') as event_manipulation '|| "
+			+ "	 ' from information_schema.triggers t ' || "
+			+ "  ' where t.trigger_schema=? ' || "
+			+ "  ' group by ' || "
+			+ "  STRING_AGG(t.column_name,',' order by t.ordinal_position) as query_text "
+			+ "  from information_schema.columns t "
 			+ "  where t.table_schema = 'information_schema' "
-			+ "    and t.table_name='triggers' "
-			+ "    and not t.column_name = 'event_manipulation' ";
-	
-	private String triggerQuery = "select distinct trigger_schema, event_object_table, trigger_name from information_schema.triggers t where t.trigger_schema = ?";
+			+ "  and t.table_name='triggers' "
+			+ "  and not t.column_name = 'event_manipulation' ";
 
+			
+	private final String routineQuery = 
+			"select r.specific_name as routine_name_for_astra, r.* from information_schema.routines r "
+			+ " where not data_type = 'trigger' and r.routine_schema = ? ";
+			
+			
+			
 	private void appendNullAtribute(Element element) {
 		element.setAttribute("xsi:nil", "true");
 	}
@@ -84,18 +91,19 @@ public class DbMetadataToXML {
 			throw new RuntimeException(e);
 		}
 		DOMImplementation impl = builder.getDOMImplementation();
-		result.addAll(fetchSimple(impl, "sequence", "sequence_name", sequenceQuery, null));
-		result.addAll(fetchSimple(impl, "view", "table_name", viewQuery, null));
-
-		result.addAll(fetchSimple(impl, "table", "table_name", tableQuery, Arrays.asList(new TableColumns(),new Constraints())));
 		
-		result.addAll(fetchSimple(impl, "index", "indexname", indexQuery, null));
-		result.addAll(fetchSimple(impl, "index", "trigger_name", composeTriggerQuery(), Arrays.asList(new TriggerBody())));
-				
+		
+		result.addAll(fetchDbItems(impl, "sequence", "sequence_name", sequenceQuery, null));
+		result.addAll(fetchDbItems(impl, "view", "table_name", viewQuery, null));
+		result.addAll(fetchDbItems(impl, "table", "table_name", tableQuery, Arrays.asList(new TableColumns(),new Constraints())));
+		result.addAll(fetchDbItems(impl, "index", "indexname", indexQuery, null));
+		result.addAll(fetchDbItems(impl, "trigger", "trigger_name_for_astra", composeTriggerQuery(), Arrays.asList(new TriggerBody())));
+		result.addAll(fetchDbItems(impl, "function","routine_name_for_astra",routineQuery, null));		
+
 		return result;
 	}
 
-	public List<DbItem> fetchSimple(DOMImplementation impl, String itemType, String itemNameColumnName, String query,
+	public List<DbItem> fetchDbItems(DOMImplementation impl, String itemType, String itemNameColumnName, String query,
 			List<AbstractDbItemProcessor> subProcessors) {
 		List<DbItem> result = new ArrayList<>();
 		try (PreparedStatement ps1 = connection.prepareCall(query)) {
@@ -143,29 +151,32 @@ public class DbMetadataToXML {
 		return result;
 	}
 
+	//for test purpose
 	private void connect() throws InstantiationException, IllegalAccessException, ClassNotFoundException, SQLException {
 		Driver d = (Driver) Class.forName("org.postgresql.Driver").newInstance();
 		Properties p = new Properties();
-		if (false) {
+		if (true) {
 			p.put("user", "gpadmin");
-			p.put("password", "******");
+			p.put("password", "pivotal");
 			this.connection = d.connect("jdbc:postgresql://10.200.80.143:5432/postgres", p);
 		} else {
 			p.put("user", "sbs");
-			p.put("password", "******");
+			p.put("password", "sbs123");
 			this.connection = d.connect("jdbc:postgresql://52.29.37.253:5432/subset", p);
 		}
 	}
 
+	//for test purpose
 	public static void main(String[] args) throws InstantiationException, IllegalAccessException,
 			ClassNotFoundException, SQLException, TransformerException {
 
 		DbMetadataToXML instance = new DbMetadataToXML();
 		instance.connect();
-		instance.schemaName = "sbs";
+		instance.schemaName = "cra";
 		instance.printResult(instance.fetchAll());
 
 	}
+	//for test purpose
 	private void printResult(List<DbItem> items) throws TransformerException {
 		TransformerFactory tf = TransformerFactory.newInstance();
 		Transformer transformer = tf.newTransformer();
@@ -180,6 +191,9 @@ public class DbMetadataToXML {
 			System.out.println(String.format("%s|%s|%s", item.getType(), item.getName(), sw.toString()));
 		}
 	}
+	
+	
+	
 	abstract class InternalContextProcessor extends AbstractDbItemProcessor {
 		@Override
 		public boolean isTagForNull() {
@@ -335,15 +349,15 @@ public class DbMetadataToXML {
 		public String getQuery() {
 			// Warning!
 			// Joining by procedure name is possible 
-			//  because trigger function can not be overwritten 
-			// due to its empty list of arguments
+			//  because a trigger function can not be overloaded 
+			//  due to its empty list of arguments
 			return "select r.* from pg_catalog.pg_trigger otrg "
 			+ " inner join pg_catalog.pg_class otbl "
 			+ "   on otbl.oid = otrg.tgrelid "
 			+ " inner join pg_catalog.pg_namespace otns "
 			+ "   on otns.oid = otbl.relnamespace "
 			+ " inner join pg_catalog.pg_proc op "
-			+ "   on op.oid = otr.tgfoid "
+			+ "   on op.oid = otrg.tgfoid "
 			+ " inner join pg_catalog.pg_namespace opns "
 			+ "  on opns.oid = op.pronamespace "
 			+ " inner join information_schema.routines r "
@@ -359,9 +373,7 @@ public class DbMetadataToXML {
 		public List<String> getQueryParameterParentColumns() {
 			return Arrays.asList("trigger_schema","event_object_table","trigger_name");
 		}
-		
 	}
-	
-	
-	
 }
+
+
