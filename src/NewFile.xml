@@ -1,0 +1,112 @@
+<row xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+	<trigger_name_for_astra>tt1_trg on sbs.tt1</trigger_name_for_astra>
+	<trigger_catalog>subset</trigger_catalog>
+	<trigger_schema>sbs</trigger_schema>
+	<trigger_name>tt1_trg</trigger_name>
+	<event_object_catalog>subset</event_object_catalog>
+	<event_object_schema>sbs</event_object_schema>
+	<event_object_table>tt1</event_object_table>
+	<action_order xsi:nil="true" />
+	<action_condition xsi:nil="true" />
+	<action_statement>EXECUTE PROCEDURE tt1_trg_proc()</action_statement>
+	<action_orientation>STATEMENT</action_orientation>
+	<action_timing>BEFORE</action_timing>
+	<action_reference_old_table xsi:nil="true" />
+	<action_reference_new_table xsi:nil="true" />
+	<action_reference_old_row xsi:nil="true" />
+	<action_reference_new_row xsi:nil="true" />
+	<created xsi:nil="true" />
+	<event_manipulation>INSERT,DELETE,UPDATE</event_manipulation>
+	<trigger_routine_entry>
+		<row>
+			<specific_catalog>subset</specific_catalog>
+			<specific_schema>sbs</specific_schema>
+			<specific_name>tt1_trg_proc_140104</specific_name>
+			<routine_catalog>subset</routine_catalog>
+			<routine_schema>sbs</routine_schema>
+			<routine_name>tt1_trg_proc</routine_name>
+			<routine_type>FUNCTION</routine_type>
+			<module_catalog xsi:nil="true" />
+			<module_schema xsi:nil="true" />
+			<module_name xsi:nil="true" />
+			<udt_catalog xsi:nil="true" />
+			<udt_schema xsi:nil="true" />
+			<udt_name xsi:nil="true" />
+			<data_type>trigger</data_type>
+			<character_maximum_length xsi:nil="true" />
+			<character_octet_length xsi:nil="true" />
+			<character_set_catalog xsi:nil="true" />
+			<character_set_schema xsi:nil="true" />
+			<character_set_name xsi:nil="true" />
+			<collation_catalog xsi:nil="true" />
+			<collation_schema xsi:nil="true" />
+			<collation_name xsi:nil="true" />
+			<numeric_precision xsi:nil="true" />
+			<numeric_precision_radix xsi:nil="true" />
+			<numeric_scale xsi:nil="true" />
+			<datetime_precision xsi:nil="true" />
+			<interval_type xsi:nil="true" />
+			<interval_precision xsi:nil="true" />
+			<type_udt_catalog>subset</type_udt_catalog>
+			<type_udt_schema>pg_catalog</type_udt_schema>
+			<type_udt_name>trigger</type_udt_name>
+			<scope_catalog xsi:nil="true" />
+			<scope_schema xsi:nil="true" />
+			<scope_name xsi:nil="true" />
+			<maximum_cardinality xsi:nil="true" />
+			<dtd_identifier>0</dtd_identifier>
+			<routine_body>EXTERNAL</routine_body>
+			<routine_definition>
+			</routine_definition>
+			<external_name xsi:nil="true" />
+			<external_language>PLPGSQL</external_language>
+			<parameter_style>GENERAL</parameter_style>
+			<is_deterministic>NO</is_deterministic>
+			<sql_data_access>MODIFIES</sql_data_access>
+			<is_null_call>NO</is_null_call>
+			<sql_path xsi:nil="true" />
+			<schema_level_routine>YES</schema_level_routine>
+			<max_dynamic_result_sets>0</max_dynamic_result_sets>
+			<is_user_defined_cast xsi:nil="true" />
+			<is_implicitly_invocable xsi:nil="true" />
+			<security_type>INVOKER</security_type>
+			<to_sql_specific_catalog xsi:nil="true" />
+			<to_sql_specific_schema xsi:nil="true" />
+			<to_sql_specific_name xsi:nil="true" />
+			<as_locator>NO</as_locator>
+			<created xsi:nil="true" />
+			<last_altered xsi:nil="true" />
+			<new_savepoint_level xsi:nil="true" />
+			<is_udt_dependent>NO</is_udt_dependent>
+			<result_cast_from_data_type xsi:nil="true" />
+			<result_cast_as_locator xsi:nil="true" />
+			<result_cast_char_max_length xsi:nil="true" />
+			<result_cast_char_octet_length xsi:nil="true" />
+			<result_cast_char_set_catalog xsi:nil="true" />
+			<result_cast_char_set_schema xsi:nil="true" />
+			<result_cast_character_set_name
+				xsi:nil="true" />
+			<result_cast_collation_catalog xsi:nil="true" />
+			<result_cast_collation_schema xsi:nil="true" />
+			<result_cast_collation_name xsi:nil="true" />
+			<result_cast_numeric_precision xsi:nil="true" />
+			<result_cast_numeric_precision_radix
+				xsi:nil="true" />
+			<result_cast_numeric_scale xsi:nil="true" />
+			<result_cast_datetime_precision
+				xsi:nil="true" />
+			<result_cast_interval_type xsi:nil="true" />
+			<result_cast_interval_precision
+				xsi:nil="true" />
+			<result_cast_type_udt_catalog xsi:nil="true" />
+			<result_cast_type_udt_schema xsi:nil="true" />
+			<result_cast_type_udt_name xsi:nil="true" />
+			<result_cast_scope_catalog xsi:nil="true" />
+			<result_cast_scope_schema xsi:nil="true" />
+			<result_cast_scope_name xsi:nil="true" />
+			<result_cast_maximum_cardinality
+				xsi:nil="true" />
+			<result_cast_dtd_identifier xsi:nil="true" />
+		</row>
+	</trigger_routine_entry>
+</row>

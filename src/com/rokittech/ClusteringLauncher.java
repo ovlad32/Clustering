@@ -1007,6 +1007,42 @@ where workflow_id = 66 and parent_column_info_id = 947
 	
 	
 	
+	static final void createCluster2() throws SQLException {
+		execSQL("drop if exists table(ilink)");
+		
+		execSQL("create table ilink as select "
+				+ "   l.id  as id , "
+				+ "   l.bit_set_exact_similarity as bs, "
+				+ "   l.LUCINE_SAMPLE_TERM_SIMILARITY as  lc, "
+				+ "   l.parent_column_info_id as p_id, "
+				+ "   cast(pi.min_val as float) as p_min, "
+				+ "   cast(pi.max_val as float) as p_max, "
+				+ "   l.child_column_info_id as c_id, "
+				+ "   cast(ci.min_val as float) as c_min, "
+				+ "   cast(ci.max_val as float) as c_max, "
+				+ "	 greatest( cast(pi.min_val as float), cast(ci.min_val as float)) as r_min, "
+				+ "	  least( cast(pi.max_val as float), cast(ci.max_val as float)) as r_max "
+				+ "	   from link l "
+				+ "	     inner join column_info ci on ci.id = l.child_column_info_id "
+				+ "	     inner join column_info pi on pi.id = l.parent_column_info_id "
+				+ "	   where l.workflow_id = 129  ");
+		
+		execSQL("create hash index ilink_pid on ilink(p_id)");
+		execSQL("create hash index ilink_cid on ilink(c_id)");
+		
+		try(Statement s = conn.createStatement();
+			ResultSet rs = s.executeQuery(
+						"select 'p' as pc, p_id as col_id,  count(1) as cnt, max(r_max-r_min) as r_delta, 0 as aux from ilink group by p_id union all "
+						+ "	select 'c' as pc, c_id, count(1) as cnt, max(r_max-r_min) as r_delta, 0 as aux from ilink  group by c_id "
+						+ " order by cnt desc,r_delta desc")){
+			if (rs.next()) {
+				
+			}
+		}
+	}
+	
+	
+	
 	static final BigDecimal SequenceDeviationThreshold = new BigDecimal(0.03f);
 	
 	
