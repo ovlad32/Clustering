@@ -15,11 +15,13 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
+import java.util.Queue;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
@@ -50,8 +52,8 @@ where workflow_id = 66 and parent_column_info_id = 947
 */
 	static final String clusteredColumnTableDefinition = "create table if not exists link_clustered_column(\n"
 			+ " column_info_id bigint not null \n" + " ,workflow_id   bigint not null \n"
-			+ " ,cluster_no    integer not null \n" + " ,cluster_label varchar(100) not null \n"
-			+ " ,constraint link_clustered_col_pk primary key (column_info_id, workflow_id, cluster_no, cluster_label)\n"
+			+ " ,cluster_number    integer not null \n" + " ,cluster_label varchar(100) not null \n"
+			+ " ,constraint link_clustered_col_pk primary key (column_info_id, workflow_id, cluster_number, cluster_label)\n"
 			+ ")";
 
 	static final String clusteredColumnParamTableDefinition = "create table if not exists link_clustered_column_param(\n"
@@ -68,11 +70,11 @@ where workflow_id = 66 and parent_column_info_id = 947
 			 "constraint link_column_group_pk primary key (parent_column_info_id,child_column_info_id,workflow_id,scope))";
 
 	static final String initialClusteringQuery = "insert into link_clustered_column"
-			+ " (column_info_id,workflow_id,cluster_no,cluster_label) "
+			+ " (column_info_id,workflow_id,cluster_number,cluster_label) "
 			+ "  select  "
 			+ "	     t.parent_column_info_id as column_info_id " 
 			+ "		     , t.workflow_id   "
-			+ "		     , t.cluster_no   "
+			+ "		     , t.cluster_number   "
 			+ "		     , t.cluster_label "
 			+ "		     from ( "
 			+ "		    select top 1   "
@@ -83,7 +85,7 @@ where workflow_id = 66 and parent_column_info_id = 947
 			+ "		      cross join (select "
 			+ "		          cast(? as  varchar(100)) as cluster_label "            
 			+ "		          , cast(? as bigint)   as workflow_id  "
-			+ "		          , cast(? as bigint)  as cluster_no         "    
+			+ "		          , cast(? as bigint)  as cluster_number    "    
 			+ "		          , cast(? as  double) as bitset_level   "
 			+ "		          , cast(? as double) as lucene_level     "
 			+ "               ) p  "
@@ -99,89 +101,41 @@ where workflow_id = 66 and parent_column_info_id = 947
 			+ "		     having count(1) >1  "
 			+ "		     order by cnt desc " 
 			+ "		   ) t ";
-			/*
-			+ " (column_info_id,workflow_id,cluster_no,cluster_label,lowerbound,upperbound) "
-		      + " select  "
-		      + "  t.parent_column_info_id as column_info_id   "
-		      + "  , t.workflow_id  "
-		      + "  , t.cluster_no  "
-		      + "  , t.cluster_label "
-		      + "  , t.lowerbound "
-		      + "  , t.upperbound " 
-		      + "   from ( "
-		      + "  select top 1   "
-		      + "         count(1) as cnt   "
-		      + "         , p.*  "
-		      + "         , l.parent_column_info_id "
-		      + "         ,min( greatest( "
-		      + "            cast(case when pcrn.real_type is not null then pci.min_val end as double), "
-		      + "            cast(case when ccrn.real_type is not null then cci.min_val end as double) )) as lowerbound "
-		      + "         ,max( least( "
-		      + "            cast(case when pcrn.real_type is not null then pci.max_val end as double), "
-		      + "            cast(case when ccrn.real_type is not null then cci.max_val end as double) )) as upperbound "
-		      + "    from link  l  "
-		      + "    cross join (select "
-		      + "        cast(? as  varchar(100)) as cluster_label    "
-		      + "        , cast(? as bigint)   as workflow_id "
-		      + "        , cast(? as bigint)  as cluster_no  "       
-		      + "        , cast(? as  double) as bitset_level  "
-		      + "        , cast (? as double) as lucene_level   "        
-		      + "       ) p  "
-		      + "     inner join column_info pci   "
-		      + "         on pci.id = l.parent_column_info_id  "
-		      + "     left outer join COLUMN_NUMERIC_REAL_TYPE pcrn   "
-		      + "         on pcrn.real_type = pci.real_type  "
-		      + "     inner join column_info cci   "
-		      + "         on cci.id = l.child_column_info_id  "
-		      + "     left outer join COLUMN_NUMERIC_REAL_TYPE ccrn   "
-		      + "         on ccrn.real_type = cci.real_type  "
-		      + "     left outer join link_clustered_column c  "
-		      + "         on c.column_info_id in (l.parent_column_info_id,child_column_info_id)  "
-		      + "       and c.cluster_label = p.cluster_label  "
-		      + "       and c.workflow_id = p.workflow_id  "
-		      + "    where l.workflow_id = p.workflow_id  "
-		      + "    and (l.bit_set_exact_similarity >= p.bitset_level or p.bitset_level is null)  "
-		      + "    and (l.lucine_sample_term_similarity >= p.lucene_level or p.lucene_level is null)  "
-		      + "    and c.column_info_id is null      "
-		      + "   group by parent_column_info_id  "
-		      + "   having count(1) >1   "
-		      + " order by cnt desc, lowerbound asc nulls last, upperbound desc nulls last  "
-		      + " ) t   ";
-		  			*/
+			
 
 	static final String workingClusteringQuery = "insert into link_clustered_column"
-			+ " (column_info_id,workflow_id,cluster_no,cluster_label) \n"
+			+ " (column_info_id,workflow_id,cluster_number,cluster_label) \n"
 			+ " select  distinct  "
 		 	+ " t.column_info_id, "
 		 	+ " t.workflow_id, "
-		 	+ " t.cluster_no, "
+		 	+ " t.cluster_number, "
 		 	+ " t.cluster_label "    
 		 	+ " 	from ( "
 		    + "     select  "
-		    + "         c.workflow_id       " 
-		    + "       , c.cluster_no      "  
+		    + "         c.workflow_id   " 
+		    + "       , c.cluster_number    "  
 		    + "       , c.cluster_label "
 		    + "       , case when c.column_info_id = l.child_column_info_id then l.parent_column_info_id else l.child_column_info_id end as column_info_id "
 		    + "       ,(select min(cv.max_val)  "
 		    + "                from  link_clustered_column tc  "
 		    + "                inner join column_info_numeric_range_view cv on cv.id = tc.column_info_id  "
-		    + "                where tc.cluster_no = p.cluster_no and tc.cluster_label = p.cluster_label "
+		    + "                where tc.cluster_number = p.cluster_number and tc.cluster_label = p.cluster_label "
 		    + "               ) as upperbound "
 		    + "       ,(select max(cv.min_val)  "
 		    + "                from  link_clustered_column tc  "
 		    + "                inner join column_info_numeric_range_view cv on cv.id = tc.column_info_id  "
-		    + "                where tc.cluster_no = p.cluster_no and tc.cluster_label = p.cluster_label "
+		    + "                where tc.cluster_number = p.cluster_number and tc.cluster_label = p.cluster_label "
 		    + "                ) as lowerbound "
 		    + "    from (select            "
 		    + "         cast(? as  varchar(100)) as cluster_label " 
 		    + "       , cast(? as bigint)   as workflow_id "            
-		    + "       , cast(? as bigint)  as cluster_no  "
+		    + "       , cast(? as bigint)  as cluster_number  "
 		    + "       , cast(? as real) as bitset_level   "          
 		    + "       , cast(? as real) as lucene_level "
 		    + "        ) p      "
 		    + "      inner join link_clustered_column c  "     
 		    + "       on c.workflow_id = p.workflow_id "
-		    + "      and c.cluster_no = p.cluster_no      "
+		    + "      and c.cluster_number = p.cluster_number      "
 		    + "      and c.cluster_label = p.cluster_label "
 		    + "     inner join link l      "
 		    + "      on l.workflow_id =  c.workflow_id "
@@ -206,12 +160,12 @@ where workflow_id = 66 and parent_column_info_id = 947
 			+ " 	distinct  "
 			+ " 	t.column_info_id, "
 			+ " 	t.workflow_id, "
-			+ " 	t.cluster_no, "
+			+ " 	t.cluster_number, "
 			+ " 	t.cluster_label    " 
 			+ " 	from ( "
 			+ "        select " 
 			+ "          c.workflow_id      " 
-			+ "          , c.cluster_no    "   
+			+ "          , c.cluster_number    "   
 			+ "          , c.cluster_label "
 			+ "          , case when c.column_info_id = l.child_column_info_id then l.parent_column_info_id else l.child_column_info_id end as column_info_id "
 			+ "          , spn.lowerbound "
@@ -219,18 +173,18 @@ where workflow_id = 66 and parent_column_info_id = 947
 			+ "      from (select           "
 			+ "            cast(? as varchar(100)) as cluster_label "
 			+ "          , cast(? as bigint)   as workflow_id            "
-			+ "          , cast(? as bigint)  as cluster_no "
+			+ "          , cast(? as bigint)  as cluster_number "
 			+ "          , cast(? as double) as bitset_level  "          
 			+ "          , cast(? as double) as lucene_level " 
 			+ "           ) p     "
 			+ "        left outer join link_clustered_column spn "
 			+ "          on spn.workflow_id = p.workflow_id "
-			+ "         and spn.cluster_no = p.cluster_no      "
+			+ "         and spn.cluster_number = p.cluster_number      "
 			+ "         and spn.cluster_label = p.cluster_label "
 			+ "         and spn.upperbound is not null "
 			+ "        inner join link_clustered_column c   "    
 			+ "          on c.workflow_id = p.workflow_id "
-			+ "         and c.cluster_no = p.cluster_no      "
+			+ "         and c.cluster_number = p.cluster_number      "
 			+ "         and c.cluster_label = p.cluster_label "
 			+ "        inner join link l      "
 			+ "         on l.workflow_id =  c.workflow_id "
@@ -260,7 +214,7 @@ where workflow_id = 66 and parent_column_info_id = 947
 			+ " values(?,?,?,?)";
 
 	static final String reportClusteredColumnsQuery = " select distinct\n" 
-	        + "    c.cluster_no \n" 
+	        + "    c.cluster_number \n" 
 			//+ " ,l.id,lr.id\n" 
 			+ "     ,l.parent_db_name \n" 
 			+ "     ,l.parent_schema_name \n" 
@@ -544,7 +498,7 @@ where workflow_id = 66 and parent_column_info_id = 947
 
 				deleteClusters(parsedArgs.getProperty("label"), longOf(parsedArgs.getProperty("wid")));
 
-				createClusters(parsedArgs.getProperty("label"), longOf(parsedArgs.getProperty("wid")),
+				createNumericClusters(parsedArgs.getProperty("label"), longOf(parsedArgs.getProperty("wid")),
 						floatOf(parsedArgs.getProperty("bl")), floatOf(parsedArgs.getProperty("ll")));
 				if (parsedArgs.containsKey("outfile")) {
 					reportClusters(parsedArgs.getProperty("label"), longOf(parsedArgs.getProperty("wid")),
@@ -847,6 +801,211 @@ where workflow_id = 66 and parent_column_info_id = 947
 
 		conn.commit();
 	}
+	static String getDrivenColumnName(String columnName){
+		return "p_id".equals(columnName) ? "c_id" : "p_id";
+	}
+	static boolean saveClusteredColumnId(Long columnId, Long clusterNumber) {
+		boolean result;
+		try(PreparedStatement psu = conn.prepareStatement(
+				"merge into icolumn(column_info_id,cluster_number) "
+				+" key(column_info_id) "
+				+" values(?,?)")) {
+
+		psu.setLong(1, columnId);
+		psu.setLong(2, clusterNumber);
+		result = psu.executeUpdate()>0; 
+		conn.commit();
+		} catch(SQLException e) {
+			throw new RuntimeException(String.format("Exception while saving clustered column column_id=%d",columnId),e);
+		}
+		return result;
+	}
+	static void createNumericClusters(String clusterLabel, Long workflowId, Float bitsetLevel, Float luceneLevel) throws SQLException {
+		
+		long clusterNumber = 0;
+		
+		if (clusterLabel == null || clusterLabel.isEmpty()) {
+			throw new RuntimeException("Error: Cluster Label has not been specified!");
+		}
+
+		if (workflowId == null) {
+			throw new RuntimeException("Error: Workflow ID has not been specified!");
+		}
+
+		if (bitsetLevel == null && luceneLevel == null) {
+			throw new RuntimeException("Error: Neither Bitset nor Lucene confidence level has not been specified!");
+		}
+
+		
+		execSQL("drop table if exists ilink");
+		execSQL("drop table if exists icolumn");
+		
+		execSQL(String.format(
+				"create /*memory local temporary */table ilink as "
+				+ " select "
+				+ "   l.id  as id , "
+				+ "   l.bit_set_exact_similarity as bs, "
+				+ "   l.lucine_sample_term_similarity as  lc, "
+				+ "   l.parent_column_info_id as p_id, "
+				+ "   cast(pi.min_val as float) as p_min, "
+				+ "   cast(pi.max_val as float) as p_max, "
+				+ "   l.child_column_info_id as c_id, "
+				+ "   cast(ci.min_val as float) as c_min, "
+				+ "   cast(ci.max_val as float) as c_max, "
+				+ "	  greatest( cast(pi.min_val as float), cast(ci.min_val as float)) as r_min, "
+				+ "	  least( cast(pi.max_val as float), cast(ci.max_val as float)) as r_max "
+				+ "	 from link l "
+				+ "	     inner join column_info ci on ci.id = l.child_column_info_id "
+				+ "	     inner join column_info pi on pi.id = l.parent_column_info_id "
+				+ "      inner join column_numeric_real_type rtc on rtc.real_type = ci.real_type"
+				+ "      inner join column_numeric_real_type rtp on rtp.real_type = pi.real_type"
+				+ "	   where pi.min_val is not null "
+				+ "      and pi.max_val is not null "
+				+ "      and ci.min_val is not null "
+				+ "      and ci.max_val is not null "
+				+ "      and l.workflow_id = %d  ",workflowId));
+		
+		execSQL("create hash index ilink_pid on ilink(p_id)");
+		execSQL("create hash index ilink_cid on ilink(c_id)");
+		
+		execSQL("create /*memory local temporary */table icolumn (column_info_id bigint primary key, cluster_number bigint)");
+		
+		Queue<Long> leadingColumnIds = new LinkedList<>();
+		Queue<Long> drivenColumnIds = null; 
+		while (true) {
+			String leadingColumnName = null,drivenColumnName = null;
+			BigDecimal clusterRangeMinValue = null, clusterRangeMaxValue = null;
+			BigDecimal rangeMinValue = null, rangeMaxValue = null;
+			
+			try(Statement initialStm = conn.createStatement();
+					ResultSet initialRS = initialStm.executeQuery(
+							  "select 'p_id' as column_name "
+							+ "     ,i.p_id as column_id  "
+							+ "     ,count(1) as cnt "
+							+ "     ,max(i.r_max - i.r_min) as r_delta"
+							+ "  from ilink i "
+							+ "  left outer join icolumn c "
+							+ "   on c.column_info_id = i.p_id "
+							+ " where c.column_info_id is null "
+							+ " group by i.p_id "
+							+ "union all "
+							+ "	select 'c_id' as column_name "
+							+ "        ,i.c_id "
+							+ "        ,count(1) as cnt "
+							+ "        ,max(i.r_max - i.r_min) as r_delta "
+							+ "  from ilink i"
+							+ "  left outer join icolumn c "
+							+ "    on c.column_info_id = i.c_id "
+							+ " where c.column_info_id is null "
+							+ " group by i.c_id "
+							+ " order by cnt desc,r_delta desc")){
+					if (initialRS.next()){
+						clusterNumber++;
+						Long columnId = initialRS.getLong("column_id");
+						leadingColumnName = initialRS.getString("column_name");
+	
+						saveClusteredColumnId(columnId, clusterNumber);
+						leadingColumnIds.offer(columnId);
+	
+						drivenColumnName = getDrivenColumnName(leadingColumnName);
+					} else {
+						break;
+					}
+					
+			}
+					
+			while(!leadingColumnIds.isEmpty()) {
+				for(Long columnId = leadingColumnIds.poll(); 
+					columnId != null;
+					columnId = leadingColumnIds.poll()) {
+				
+					drivenColumnIds = new LinkedList<>(); 
+					try(PreparedStatement ps = conn.prepareStatement(
+						String.format(
+								"select t.id"
+								+ "  ,t.%1$s "
+								+ "  ,t.r_max "
+								+ "  ,t.r_min "
+								+ "  ,t.r_max - r_min "
+								+ "  from ilink t "
+								+ "  left outer join icolumn c "
+								+ "   on c.column_info_id = t.%1$s "
+								+ "  where t.%2$s = ? "
+								+ "    and c.column_info_id is null "
+								+ "	order by t.r_max - t.r_min desc "
+								,drivenColumnName
+								,leadingColumnName))) {
+						
+						ps.setLong(1, columnId);
+						
+						try(ResultSet psrs = ps.executeQuery()) {
+							while (psrs.next()) {
+								
+								rangeMinValue = psrs.getBigDecimal("r_min");
+								rangeMaxValue = psrs.getBigDecimal("r_max");
+						
+								if (rangeMinValue == null || rangeMaxValue == null) {
+									throw new RuntimeException(String.format(
+											"Null(s) in Min/Max! RangeMin=%f, RangeMax=%f for pair id = %d"
+											,rangeMinValue
+											,rangeMaxValue
+											,psrs.getLong("id"))
+											);
+								}
+								
+								if (clusterRangeMinValue == null) {
+									clusterRangeMinValue = rangeMinValue;
+									clusterRangeMaxValue = rangeMaxValue;
+									drivenColumnIds.offer(psrs.getLong(drivenColumnName));
+									continue;
+								}
+								
+								if(rangeMinValue.compareTo(clusterRangeMaxValue) <= 0 && 
+								    rangeMaxValue.compareTo(clusterRangeMinValue) >= 0 ) {
+									if(rangeMinValue.compareTo(clusterRangeMinValue) > 0 ) clusterRangeMinValue = rangeMinValue;
+									if(rangeMaxValue.compareTo(clusterRangeMaxValue) < 0 ) clusterRangeMaxValue = rangeMaxValue;
+									drivenColumnIds.offer(psrs.getLong(drivenColumnName));
+								}
+							}
+						}
+					}
+				}
+				
+				leadingColumnIds = drivenColumnIds;
+				leadingColumnName = drivenColumnName;
+				drivenColumnName = getDrivenColumnName(drivenColumnName);
+				
+				if(drivenColumnIds.isEmpty()) 
+					break;
+				
+				for(Long columnId : drivenColumnIds) {
+					saveClusteredColumnId(columnId, clusterNumber);
+				}
+			}
+		}
+		
+		try(PreparedStatement psi = conn.prepareStatement(
+			"insert into link_clustered_column(workflow_id,cluster_label,column_info_id,cluster_number)"
+			+ "select cast(? as bigint) "
+			+ "       ,cast(? as varchar(100))"
+			+ "       ,t.column_info_id"
+			+ "       ,t.cluster_number "
+			+ "  from icolumn t where t.cluster_number in ( "
+			+ " 	select cluster_number "
+			+ "		from icolumn "
+			+ "		group by cluster_number "
+			+ "		having count(column_info_id)>1"
+			+ "	)")){
+			psi.setLong(1, workflowId);
+			psi.setString(2, clusterLabel);
+			psi.executeUpdate();
+			conn.commit();
+		}
+			
+		
+	}
+	
+	
 	
 	static final BigDecimal SequenceDeviationThreshold = new BigDecimal(0.03f);
 	
@@ -1366,7 +1525,7 @@ where workflow_id = 66 and parent_column_info_id = 947
 					}
 					out.write("<TR>");
 
-					out.elementf("TD", "class='integer'", "%d", rs.getLong("CLUSTER_NO"));
+					out.elementf("TD", "class='integer'", "%d", rs.getLong("CLUSTER_NUMBER"));
 					out.element("TD", rs.getString("PARENT_DB_NAME"));
 					out.element("TD", rs.getString("PARENT_SCHEMA_NAME"));
 					out.element("TD", rs.getString("PARENT_TABLE_NAME"));
