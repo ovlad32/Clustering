@@ -827,29 +827,33 @@ where workflow_id = 66 and parent_column_info_id = 947
 		execSQL("drop table if exists t$params");
 		
 		
-		execSQL(String.format(
-				"create memory local temporary table t$link as "
-				+ " select "
-				+ "   l.id  as link_id , "
-				+ "   l.bit_set_exact_similarity as bitset_level, "
-				+ "   l.lucine_sample_term_similarity as  lucene_level, "
-				+ "   l.parent_column_info_id as parent_id, "
-				+ "   l.child_column_info_id as child_id, "
-				+ "	  greatest( cast(pi.min_val as double), "
-				+ "             cast(ci.min_val as double)) as link_min, "
-				+ "	  least( cast(pi.max_val as double), "
-				+ "          cast(ci.max_val as double)) as link_max "
-				+ "	 from link l "
-				+ "	     inner join column_info ci on ci.id = l.child_column_info_id "
-				+ "	     inner join column_info pi on pi.id = l.parent_column_info_id "
-				+ "      inner join column_numeric_real_type rtc on rtc.real_type = ci.real_type"
-				+ "      inner join column_numeric_real_type rtp on rtp.real_type = pi.real_type"
-				+ "	   where pi.min_val is not null "
-				+ "      and pi.max_val is not null "
-				+ "      and ci.min_val is not null "
-				+ "      and ci.max_val is not null "
-				+ "      and l.workflow_id = %d  ",workflowId));
 		
+		try(PreparedStatement ps = conn.prepareStatement(
+				"create memory local temporary table t$link as "
+						+ " select "
+						+ "   l.id  as link_id , "
+						+ "   l.bit_set_exact_similarity as bitset_level, "
+						+ "   l.lucine_sample_term_similarity as  lucene_level, "
+						+ "   l.parent_column_info_id as parent_id, "
+						+ "   l.child_column_info_id as child_id, "
+						+ "	  greatest( cast(pi.min_val as double), "
+						+ "             cast(ci.min_val as double)) as link_min, "
+						+ "	  least( cast(pi.max_val as double), "
+						+ "          cast(ci.max_val as double)) as link_max "
+						+ "	 from link l "
+						+ "	     inner join column_info ci on ci.id = l.child_column_info_id "
+						+ "	     inner join column_info pi on pi.id = l.parent_column_info_id "
+						+ "      inner join column_numeric_real_type rtc on rtc.real_type = ci.real_type"
+						+ "      inner join column_numeric_real_type rtp on rtp.real_type = pi.real_type"
+						+ "	   where pi.min_val is not null "
+						+ "      and pi.max_val is not null "
+						+ "      and ci.min_val is not null "
+						+ "      and ci.max_val is not null "
+						+ "      and l.workflow_id = ?  ")){
+			ps.setLong(1, workflowId);
+			ps.execute();
+		}
+
 		execSQL("create hash index t$link_parent_id on t$link(parent_id)");
 		execSQL("create hash index t$link_child_id on t$link(child_id)");
 		
@@ -872,12 +876,11 @@ where workflow_id = 66 and parent_column_info_id = 947
 			ps.execute();
 		};
 		
-		Queue<Long> leadingColumnIds = new LinkedList<>();
-		Queue<Long> drivenColumnIds = null; 
 		while (true) {
+			Queue<Long> leadingColumnIds = new LinkedList<>();
+			Queue<Long> drivenColumnIds = null; 
 			BigDecimal clusterMinValue = null, clusterMaxValue = null;
 			BigDecimal linkMinValue = null, linkMaxValue = null;
-			//Long prevColumnId = null;
 			
 			try(Statement initialStm = conn.createStatement();
 					ResultSet initialRS = initialStm.executeQuery(
@@ -910,7 +913,6 @@ where workflow_id = 66 and parent_column_info_id = 947
 					if (initialRS.next()){
 						clusterNumber++;
 						Long columnId = initialRS.getLong("column_id");
-						//if (prevColumnId == null) prevColumnId = columnId;
 	
 						saveClusteredColumnId(columnId, clusterNumber);
 						leadingColumnIds.offer(columnId);
@@ -929,7 +931,6 @@ where workflow_id = 66 and parent_column_info_id = 947
 					try(PreparedStatement ps = conn.prepareStatement(
 								"select "
 								+ "  t.link_max - t.link_min "
-								+ "  ,t.link_id "
 								+ "  ,t.child_id  as column_id"
 								+ "  ,t.link_max "
 								+ "  ,t.link_min "
@@ -941,7 +942,6 @@ where workflow_id = 66 and parent_column_info_id = 947
 								+ " union "
 								+ " select "
 								+ "  t.link_max - t.link_min "
-								+ "  ,t.link_id"
 								+ "  ,t.parent_id as column_id"
 								+ "  ,t.link_max "
 								+ "  ,t.link_min "
@@ -990,16 +990,16 @@ where workflow_id = 66 and parent_column_info_id = 947
 						}
 					}
 				}
-				
-				leadingColumnIds = drivenColumnIds;
-				
-				if(drivenColumnIds.isEmpty()) 
-					break;
-				
-				for(Long columnId : drivenColumnIds) {
-					saveClusteredColumnId(columnId, clusterNumber);
-				}
 			}
+			leadingColumnIds = drivenColumnIds;
+			
+			if(drivenColumnIds.isEmpty()) 
+				break;
+			
+			for(Long columnId : drivenColumnIds) {
+				saveClusteredColumnId(columnId, clusterNumber);
+			}
+	
 		}
 		
 		execSQL("delete from link_clustered_column c "
@@ -1011,21 +1011,27 @@ where workflow_id = 66 and parent_column_info_id = 947
 			boolean updated = false; 
 			try(Statement ps = conn.createStatement()){
 				updated = 0 != ps.executeUpdate(	
-				"insert into link_clustered_column(workflow_id, cluster_label, column_info_id,cluster_number) "
-				+ " direct "
-				+ " select p.workflow_id "
-				+ "       ,p.cluster_label "
-				+ "       ,t.column_id "
-				+ "       ,t.cluster_number "
-				+ "  from t$column t "
-				+ "   cross join t$param p "
-				+ "   where t.cluster_number in ( "
-				+ " 	select ti.cluster_number "
-				+ "		from t$column ti "
-				+ "     where ti.cluster_number>0 "
-				+ "		group by ti.cluster_number "
-				+ "		having count(ti.column_id) >=3 " //a cluster must have 3 or more columns
-				+ "	)");
+						"insert into link_clustered_column(workflow_id, cluster_label, column_info_id,cluster_number) "
+								+ " direct "
+								+ " select p.workflow_id "
+								+ "       ,p.cluster_label "
+								+ "       ,t.column_id "
+								+ "       ,i.renumbered_cluster_number "
+								+ "    from t$param p"
+								+ "    cross join ("
+								+ "       select "
+								+ "         rownum as renumbered_cluster_number,"
+								+ "         cluster_number from (	"
+								+ "            select ti.cluster_number "
+								+ "	         	from t$column ti "
+								+ "             where ti.cluster_number>0 "
+								+ "		        group by ti.cluster_number "
+								+ "		        having count(ti.column_id) >=3 " //a cluster must have 3 or more columns
+								+ "           ) "
+								+ "        ) i "
+								+ "       inner join t$column t "
+								+ "    on t.cluster_number = i.cluster_number " 
+								+ " ");
 			}
 			if(updated) {
 				execSQL("merge into link_clustered_column_param ( "
