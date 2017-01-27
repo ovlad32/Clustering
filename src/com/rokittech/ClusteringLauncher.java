@@ -4,12 +4,8 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.BigInteger;
-import java.math.MathContext;
-import java.net.URLEncoder;
-import java.nio.charset.Charset;
 import java.sql.Connection;
 import java.sql.Driver;
-import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -25,11 +21,6 @@ import java.util.Queue;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
-
-import org.mapdb.BTreeMap;
-import org.mapdb.DB;
-import org.mapdb.DBMaker;
-import org.mapdb.Serializer;
 
 import com.zaxxer.sparsebits.SparseBitSet;
 
@@ -693,7 +684,7 @@ where workflow_id = 66 and parent_column_info_id = 947
 				 if (counter == 1) {
 					 System.out.println("Stored labels:");
 					 System.out.println("|---|----------|--------------------|------------|------------|");
-					 System.out.println("| # |WorkflowID|Label name          |Lucene level|Bitset level|");
+					 System.out.println("| # |WorkflowID|Label name          |Bitset level|Lucene level|");
 					 System.out.println("|---|----------|--------------------|------------|------------|");
 				 }
 				 
@@ -805,7 +796,6 @@ where workflow_id = 66 and parent_column_info_id = 947
 	
 	static void createNumericClusters(String clusterLabel, Long workflowId, Float bitsetLevel, Float luceneLevel) throws SQLException {
 		
-		conn.setAutoCommit(false);
 		
 		long clusterNumber = 0;
 		
@@ -836,6 +826,10 @@ where workflow_id = 66 and parent_column_info_id = 947
 						+ "   l.lucine_sample_term_similarity as  lucene_level, "
 						+ "   l.parent_column_info_id as parent_id, "
 						+ "   l.child_column_info_id as child_id, "
+						+ "   cast(pi.min_val as double) parent_min_val,"
+						+ "   cast(pi.max_val as double) parent_max_val,"
+						+ "   cast(ci.min_val as double) child_min_val,"
+						+ "   cast(ci.max_val as double) child_max_val,"
 						+ "	  greatest( cast(pi.min_val as double), "
 						+ "             cast(ci.min_val as double)) as link_min, "
 						+ "	  least( cast(pi.max_val as double), "
@@ -876,6 +870,8 @@ where workflow_id = 66 and parent_column_info_id = 947
 			ps.execute();
 		};
 		
+		conn.setAutoCommit(false);
+
 		while (true) {
 			Queue<Long> leadingColumnIds = new LinkedList<>();
 			Queue<Long> drivenColumnIds = null; 
@@ -923,9 +919,9 @@ where workflow_id = 66 and parent_column_info_id = 947
 			}
 					
 			while(!leadingColumnIds.isEmpty()) {
-				for(Long columnId = leadingColumnIds.poll(); 
-					columnId != null;
-					columnId = leadingColumnIds.poll()) {
+				for(Long leadingColumnId = leadingColumnIds.poll(); 
+					leadingColumnId != null;
+					leadingColumnId = leadingColumnIds.poll()) {
 				
 					drivenColumnIds = new LinkedList<>(); 
 					try(PreparedStatement ps = conn.prepareStatement(
@@ -952,8 +948,8 @@ where workflow_id = 66 and parent_column_info_id = 947
 								+ "    and c.column_id is null "
 								+ "	order by 1 desc ")) {
 						
-						ps.setLong(1, columnId);
-						ps.setLong(2, columnId);
+						ps.setLong(1, leadingColumnId);
+						ps.setLong(2, leadingColumnId);
 						
 						try(ResultSet psrs = ps.executeQuery()) {
 							while (psrs.next()) {
@@ -963,10 +959,11 @@ where workflow_id = 66 and parent_column_info_id = 947
 						
 								if (linkMinValue == null || linkMaxValue == null) {
 									throw new RuntimeException(String.format(
-											"Null(s) in Min/Max! LinkeMin=%f, LinkMax=%f for pair id = %d"
+											"Null(s) in Min/Max! LinkeMin=%f, LinkMax=%f for pair id1 = %d,%d"
 											,linkMinValue
 											,linkMaxValue
-											,psrs.getLong("id"))
+											,leadingColumnId
+											,psrs.getLong("column_id"))
 											);
 								}
 								
@@ -976,8 +973,9 @@ where workflow_id = 66 and parent_column_info_id = 947
 									drivenColumnIds.offer(psrs.getLong("column_id"));
 									continue;
 								}
-								
-								if(linkMinValue.compareTo(clusterMaxValue) <= 0 && 
+
+								//!!Here is the place where transitive link filter happens
+								if( false || linkMinValue.compareTo(clusterMaxValue) <= 0 && 
 								    linkMaxValue.compareTo(clusterMinValue) >= 0 ) {
 									if(linkMinValue.compareTo(clusterMinValue) > 0 ) clusterMinValue = linkMinValue;
 									if(linkMaxValue.compareTo(clusterMaxValue) < 0 ) clusterMaxValue = linkMaxValue;
@@ -992,7 +990,7 @@ where workflow_id = 66 and parent_column_info_id = 947
 				}
 			}
 			leadingColumnIds = drivenColumnIds;
-			
+			//System.out.println(String.format("%d - %d ", clusterNumber, drivenColumnIds.size()));
 			if(drivenColumnIds.isEmpty()) 
 				break;
 			
@@ -1007,48 +1005,48 @@ where workflow_id = 66 and parent_column_info_id = 947
 				+ "  select p.workflow_id,p.cluster_label from t$param p "
 				+ ")");
 		
-		{ 
-			boolean updated = false; 
-			try(Statement ps = conn.createStatement()){
-				updated = 0 != ps.executeUpdate(	
-						"insert into link_clustered_column(workflow_id, cluster_label, column_info_id,cluster_number) "
-								+ " direct "
-								+ " select p.workflow_id "
-								+ "       ,p.cluster_label "
-								+ "       ,t.column_id "
-								+ "       ,i.renumbered_cluster_number "
-								+ "    from t$param p"
-								+ "    cross join ("
-								+ "       select "
-								+ "         rownum as renumbered_cluster_number,"
-								+ "         cluster_number from (	"
-								+ "            select ti.cluster_number "
-								+ "	         	from t$column ti "
-								+ "             where ti.cluster_number>0 "
-								+ "		        group by ti.cluster_number "
-								+ "		        having count(ti.column_id) >=3 " //a cluster must have 3 or more columns
-								+ "           ) "
-								+ "        ) i "
-								+ "       inner join t$column t "
-								+ "    on t.cluster_number = i.cluster_number " 
-								+ " ");
-			}
-			if(updated) {
-				execSQL("merge into link_clustered_column_param ( "
-						+ " workflow_id "
-						+ ",cluster_label "
-						+ ",bitset_level "
-						+ ",lucene_level "
-						+ ") key (workflow_id, cluster_label) "
-						+ "select "
-						+ " p.workflow_id "
-						+ ", p.cluster_label "
-						+ ", p.bitset_level "
-						+ ", p.lucene_level "
-						+ " from t$param p"
-						);
-				conn.commit();
-			}
+	 
+		//Reoredering cluster numbers and saving collected columns
+		boolean updated = false; 
+		try(Statement ps = conn.createStatement()){
+			updated = 0 != ps.executeUpdate(	
+					"insert into link_clustered_column(workflow_id, cluster_label, column_info_id,cluster_number) "
+							+ " direct "
+							+ " select p.workflow_id "
+							+ "       ,p.cluster_label "
+							+ "       ,t.column_id "
+							+ "       ,i.renumbered_cluster_number "
+							+ "    from t$param p"
+							+ "    cross join ("
+							+ "       select "
+							+ "         rownum as renumbered_cluster_number,"
+							+ "         cluster_number from (	"
+							+ "            select ti.cluster_number "
+							+ "	         	from t$column ti "
+							+ "             where ti.cluster_number>0 "
+							+ "		        group by ti.cluster_number "
+							+ "		        having count(ti.column_id) >=3 " //a cluster must have 3 or more columns
+							+ "           ) "
+							+ "        ) i "
+							+ "       inner join t$column t "
+							+ "    on t.cluster_number = i.cluster_number " 
+							+ " ");
+		}
+		if(updated) {
+			execSQL("merge into link_clustered_column_param ( "
+					+ " workflow_id "
+					+ ",cluster_label "
+					+ ",bitset_level "
+					+ ",lucene_level "
+					+ ") key (workflow_id, cluster_label) "
+					+ "select "
+					+ " p.workflow_id "
+					+ ", p.cluster_label "
+					+ ", p.bitset_level "
+					+ ", p.lucene_level "
+					+ " from t$param p"
+					);
+			conn.commit();
 		}
 		conn.rollback();
 			
