@@ -26,8 +26,9 @@ import com.zaxxer.sparsebits.SparseBitSet;
 
 
 public class ClusteringLauncher {
-	// Clustering.jar a --url tcp://52.59.69.151:9090/./data/h2/edm --uid edm --pwd edmedm --wid 57 --label L2 --bl 0.1 --outfile res.html 
-		
+	// Clustering.jar a --url tcp://52.59.69.151:9090/./data/h2/edm --uid edm --pwd edmedm --wid 57 --label L2 --bl 0.1 --outfile res.html
+	//c --url tcp://52.59.69.151:9090/./data/h2/edm --uid edm --pwd edmedm --wid 162 --label L129 --bl 0.1 --bucket 1000 --outfile res.html
+	
 	static Connection conn;
 /*
  
@@ -44,6 +45,7 @@ where workflow_id = 66 and parent_column_info_id = 947
 	static final String clusteredColumnTableDefinition = "create table if not exists link_clustered_column(\n"
 			+ " column_info_id bigint not null \n" + " ,workflow_id   bigint not null \n"
 			+ " ,cluster_number    integer not null \n" + " ,cluster_label varchar(100) not null \n"
+			+ " ,processing_order bigint"
 			+ " ,constraint link_clustered_col_pk primary key (column_info_id, workflow_id, cluster_number, cluster_label)\n"
 			+ ")";
 
@@ -798,6 +800,7 @@ where workflow_id = 66 and parent_column_info_id = 947
 		
 		
 		long clusterNumber = 0;
+		long processingOrder = 0;
 		
 		if (clusterLabel == null || clusterLabel.isEmpty()) {
 			throw new RuntimeException("Error: Cluster Label has not been specified!");
@@ -814,12 +817,12 @@ where workflow_id = 66 and parent_column_info_id = 947
 		
 		execSQL("drop table if exists t$link");
 		execSQL("drop table if exists t$column");
-		execSQL("drop table if exists t$params");
+		execSQL("drop table if exists t$param");
 		
 		
 		
 		try(PreparedStatement ps = conn.prepareStatement(
-				"create memory local temporary table t$link as "
+				"create /*memory local temporary*/ table t$link as "
 						+ " select "
 						+ "   l.id  as link_id , "
 						+ "   l.bit_set_exact_similarity as bitset_level, "
@@ -851,13 +854,14 @@ where workflow_id = 66 and parent_column_info_id = 947
 		execSQL("create hash index t$link_parent_id on t$link(parent_id)");
 		execSQL("create hash index t$link_child_id on t$link(child_id)");
 		
-		execSQL("create memory local temporary table t$column ("
+		execSQL("create /*memory local temporary*/ table t$column ("
 				+ "column_id bigint primary key "
 				+ ",cluster_number bigint"
+				+ ",processing_order bigint"
 				+ ")");
 		
 		try(PreparedStatement ps = conn.prepareStatement(
-				"create memory local temporary table t$param as "
+				"create /*memory local temporary*/ table t$param as "
 				+ "select "
 				+ "  cast(? as bigint) workflow_id "
 				+ ", cast(? as varchar(100)) as cluster_label "
@@ -887,9 +891,11 @@ where workflow_id = 66 and parent_column_info_id = 947
 							+ "  inner join t$param p"
 							+ "   on ((t.bitset_level >= p.bitset_level or p.bitset_level is null) or "
 							+ "       (t.lucene_level >= p.lucene_level or p.lucene_level is null)) "
-							+ "  left outer join t$column c "
-							+ "   on c.column_id = t.parent_id "
-							+ " where c.column_id is null "
+							+ "  left outer join t$column cp "
+							+ "   on cp.column_id = t.parent_id "
+							+ "  left outer join t$column cc "
+							+ "   on cc.column_id = t.child_id "
+							+ " where cp.column_id is null and cc.column_id is null"
 							+ " group by t.parent_id "
 							+ " having pairs>1"
 							+ "union all "
@@ -900,17 +906,20 @@ where workflow_id = 66 and parent_column_info_id = 947
 							+ "  inner join t$param p"
 							+ "   on ((t.bitset_level >= p.bitset_level or p.bitset_level is null) or "
 							+ "       (t.lucene_level >= p.lucene_level or p.lucene_level is null)) "
-							+ "  left outer join t$column c "
-							+ "    on c.column_id = t.child_id "
-							+ " where c.column_id is null "
+							+ "  left outer join t$column cp "
+							+ "    on cp.column_id = t.parent_id "
+							+ "  left outer join t$column cc "
+							+ "    on cc.column_id = t.child_id "
+							+ " where cp.column_id is null and cc.column_id is null"
 							+ " group by t.child_id "
 							+ " having pairs>1"
 							+ " order by pairs desc, link_delta desc, column_id asc")){
 					if (initialRS.next()){
 						clusterNumber++;
+						processingOrder = 1L;
 						Long columnId = initialRS.getLong("column_id");
 	
-						saveClusteredColumnId(columnId, clusterNumber);
+						saveClusteredColumnId(columnId, clusterNumber,processingOrder);
 						leadingColumnIds.offer(columnId);
 					} else {
 						break;
@@ -977,8 +986,10 @@ where workflow_id = 66 and parent_column_info_id = 947
 								//!!Here is the place where transitive link filter happens
 								if( false || linkMinValue.compareTo(clusterMaxValue) <= 0 && 
 								    linkMaxValue.compareTo(clusterMinValue) >= 0 ) {
+									
 									if(linkMinValue.compareTo(clusterMinValue) > 0 ) clusterMinValue = linkMinValue;
 									if(linkMaxValue.compareTo(clusterMaxValue) < 0 ) clusterMaxValue = linkMaxValue;
+									
 									drivenColumnIds.offer(psrs.getLong("column_id"));
 								} else {
 									//saveClusteredColumnId(columnId, -1L);
@@ -995,7 +1006,7 @@ where workflow_id = 66 and parent_column_info_id = 947
 				break;
 			
 			for(Long columnId : drivenColumnIds) {
-				saveClusteredColumnId(columnId, clusterNumber);
+				saveClusteredColumnId(columnId, clusterNumber,++processingOrder);
 			}
 	
 		}
@@ -1010,12 +1021,13 @@ where workflow_id = 66 and parent_column_info_id = 947
 		boolean updated = false; 
 		try(Statement ps = conn.createStatement()){
 			updated = 0 != ps.executeUpdate(	
-					"insert into link_clustered_column(workflow_id, cluster_label, column_info_id,cluster_number) "
+					"insert into link_clustered_column(workflow_id, cluster_label, column_info_id,cluster_number,processing_order) "
 							+ " direct "
 							+ " select p.workflow_id "
 							+ "       ,p.cluster_label "
 							+ "       ,t.column_id "
-							+ "       ,i.renumbered_cluster_number "
+							+ "       ,i.renumbered_cluster_number"
+							+ "       ,t.processing_order "
 							+ "    from t$param p"
 							+ "    cross join ("
 							+ "       select "
@@ -1053,15 +1065,16 @@ where workflow_id = 66 and parent_column_info_id = 947
 		
 	}
 	
-	static boolean saveClusteredColumnId(Long columnId, Long clusterNumber) {
+	static boolean saveClusteredColumnId(Long columnId, Long clusterNumber,Long processingOrder) {
 		boolean result;
 		try(PreparedStatement psu = conn.prepareStatement(
-				"merge into t$column(column_id,cluster_number) "
+				"merge into t$column(column_id,cluster_number,processing_order) "
 				+" key(column_id) "
-				+" values(?,?)")) {
+				+" values(?,?,?)")) {
 
 		psu.setLong(1, columnId);
 		psu.setLong(2, clusterNumber);
+		psu.setLong(3, processingOrder);
 		result = psu.executeUpdate()>0; 
 		} catch(SQLException e) {
 			throw new RuntimeException(String.format("Exception while saving clustered column column_id=%d",columnId),e);

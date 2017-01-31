@@ -93,12 +93,12 @@ public class DbMetadataToXML {
 		DOMImplementation impl = builder.getDOMImplementation();
 		
 		
-		result.addAll(fetchDbItems(impl, "sequence", "sequence_name", sequenceQuery, null));
-		result.addAll(fetchDbItems(impl, "view", "table_name", viewQuery, null));
-		result.addAll(fetchDbItems(impl, "table", "table_name", tableQuery, Arrays.asList(new TableColumns(),new Constraints())));
-		result.addAll(fetchDbItems(impl, "index", "indexname", indexQuery, null));
+//		result.addAll(fetchDbItems(impl, "sequence", "sequence_name", sequenceQuery, null));
+		//result.addAll(fetchDbItems(impl, "view", "table_name", viewQuery, null));
+		//result.addAll(fetchDbItems(impl, "table", "table_name", tableQuery, Arrays.asList(new TableColumns(),new Constraints())));
+		//result.addAll(fetchDbItems(impl, "index", "indexname", indexQuery, null));
 		result.addAll(fetchDbItems(impl, "trigger", "trigger_name_for_astra", composeTriggerQuery(), Arrays.asList(new TriggerBody())));
-		result.addAll(fetchDbItems(impl, "function","routine_name_for_astra",routineQuery, null));		
+	//	result.addAll(fetchDbItems(impl, "function","routine_name_for_astra",routineQuery, null));		
 
 		return result;
 	}
