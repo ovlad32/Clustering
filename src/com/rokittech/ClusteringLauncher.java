@@ -28,7 +28,7 @@ import com.zaxxer.sparsebits.SparseBitSet;
 public class ClusteringLauncher {
 	// Clustering.jar a --url tcp://52.59.69.151:9090/./data/h2/edm --uid edm --pwd edmedm --wid 57 --label L2 --bl 0.1 --outfile res.html
 	//c --url tcp://52.59.69.151:9090/./data/h2/edm --uid edm --pwd edmedm --wid 162 --label L129 --bl 0.1 --bucket 1000 --outfile res.html
-	
+	// c --url tcp://52.29.37.253:9090/./data/h2/edm --uid edm --pwd edmedm --wid 290 --label LabelTest --bl 0.01 --outfile res.html
 	static Connection conn;
 /*
  
@@ -387,7 +387,18 @@ where workflow_id = 66 and parent_column_info_id = 947
 	  "  l.parent_db_name,l.parent_schema_name,l.parent_table_name, " +
 	  "  l.child_db_name,l.child_schema_name,l.child_table_name, bitset_group_num";
 
-
+	private static final String columnInfoNumericRangeView =
+	"CREATE OR REPLACE VIEW PUBLIC.COLUMN_INFO_NUMERIC_RANGE_VIEW AS "
+	+ "SELECT "
+	+ "  C.ID "
+	+ "  ,CASE WHEN (RT.REAL_TYPE IS NOT NULL) THEN TRUE ELSE FALSE END AS IS_NUMERIC_TYPE "
+    + "  ,CAST(CASE WHEN (RT.REAL_TYPE IS NOT NULL) THEN C.MIN_VAL END AS DOUBLE) AS MIN_VAL "
+    +"   ,CAST(CASE WHEN (RT.REAL_TYPE IS NOT NULL) THEN C.MAX_VAL END AS DOUBLE) AS MAX_VAL "
+    +" FROM PUBLIC.COLUMN_INFO C /* PUBLIC.COLUMN_INFO.tableScan */ "
+    +" LEFT OUTER JOIN PUBLIC.COLUMN_NUMERIC_REAL_TYPE RT /* PUBLIC.PRIMARY_KEY_4A: REAL_TYPE = C.REAL_TYPE */ "
+    +"  ON RT.REAL_TYPE = C.REAL_TYPE ";
+    
+    
 	private static void initH2(String url, String uid, String password) throws SQLException, RuntimeException,
 			InstantiationException, IllegalAccessException, ClassNotFoundException {
 		Driver driver = (Driver) Class.forName("org.h2.Driver").newInstance();
@@ -491,7 +502,7 @@ where workflow_id = 66 and parent_column_info_id = 947
 
 				deleteClusters(parsedArgs.getProperty("label"), longOf(parsedArgs.getProperty("wid")));
 
-				createNumericClusters(parsedArgs.getProperty("label"), longOf(parsedArgs.getProperty("wid")),
+				createNumeric2Clusters(parsedArgs.getProperty("label"), longOf(parsedArgs.getProperty("wid")),
 						floatOf(parsedArgs.getProperty("bl")), floatOf(parsedArgs.getProperty("ll")));
 				if (parsedArgs.containsKey("outfile")) {
 					reportClusters(parsedArgs.getProperty("label"), longOf(parsedArgs.getProperty("wid")),
@@ -919,7 +930,7 @@ where workflow_id = 66 and parent_column_info_id = 947
 						processingOrder = 1L;
 						Long columnId = initialRS.getLong("column_id");
 	
-						saveClusteredColumnId(columnId, clusterNumber,processingOrder);
+						saveClusteredColumnId(columnId, clusterNumber,processingOrder,null,null);
 						leadingColumnIds.offer(columnId);
 					} else {
 						break;
@@ -1006,7 +1017,7 @@ where workflow_id = 66 and parent_column_info_id = 947
 				break;
 			
 			for(Long columnId : drivenColumnIds) {
-				saveClusteredColumnId(columnId, clusterNumber,++processingOrder);
+				saveClusteredColumnId(columnId, clusterNumber,++processingOrder,null,null);
 			}
 	
 		}
@@ -1065,16 +1076,19 @@ where workflow_id = 66 and parent_column_info_id = 947
 		
 	}
 	
-	static boolean saveClusteredColumnId(Long columnId, Long clusterNumber,Long processingOrder) {
+	static boolean saveClusteredColumnId(Long columnId, Long clusterNumber,Long processingOrder,
+			BigDecimal minValue,BigDecimal maxValue) {
 		boolean result;
 		try(PreparedStatement psu = conn.prepareStatement(
-				"merge into t$column(column_id,cluster_number,processing_order) "
+				"merge into t$column(column_id,cluster_number,processing_order,min_val,max_val) "
 				+" key(column_id) "
-				+" values(?,?,?)")) {
+				+" values(?,?,?,?,?)")) {
 
 		psu.setLong(1, columnId);
 		psu.setLong(2, clusterNumber);
 		psu.setLong(3, processingOrder);
+		psu.setBigDecimal(4, minValue);
+		psu.setBigDecimal(5, maxValue);
 		result = psu.executeUpdate()>0; 
 		} catch(SQLException e) {
 			throw new RuntimeException(String.format("Exception while saving clustered column column_id=%d",columnId),e);
@@ -1083,6 +1097,295 @@ where workflow_id = 66 and parent_column_info_id = 947
 	}
 	
 	
+	static boolean saveChainedColumnId(Long columnId) {
+		boolean result;
+		try(PreparedStatement psu = conn.prepareStatement(
+				"merge into t$chained(column_id,min_val,max_val) "
+				+" key(column_id) "
+				+" select c.id "
+				+" cast(c.min_val as double) as min_val,"
+				+" cast(c.max_val as double) as max_val "
+				+" from column_info c where c.id = ?")) {
+
+		psu.setLong(1, columnId);
+		result = psu.executeUpdate()>0; 
+		} catch(SQLException e) {
+			throw new RuntimeException(String.format("Exception while saving chained column column_id=%d",columnId),e);
+		}
+		return result;
+	}	
+	
+	
+static void createNumeric2Clusters(String clusterLabel, Long workflowId, Float bitsetLevel, Float luceneLevel) throws SQLException {
+		
+		long clusterNumber = 0;
+		long processingOrder = 0;
+		
+		if (clusterLabel == null || clusterLabel.isEmpty()) {
+			throw new RuntimeException("Error: Cluster Label has not been specified!");
+		}
+
+		if (workflowId == null) {
+			throw new RuntimeException("Error: Workflow ID has not been specified!");
+		}
+
+		if (bitsetLevel == null && luceneLevel == null) {
+			throw new RuntimeException("Error: Neither Bitset nor Lucene confidence level has not been specified!");
+		}
+
+		
+		execSQL("drop table if exists t$link");
+		execSQL("drop table if exists t$column");
+		execSQL("drop table if exists t$queue");
+		execSQL("drop table if exists t$param");
+		
+		
+		try(PreparedStatement ps = conn.prepareStatement(
+				"create /*memory local temporary*/ table t$param as "
+				+ "select "
+				+ "  cast(? as bigint) workflow_id "
+				+ ", cast(? as varchar(100)) as cluster_label "
+				+ ", cast(? as double) as bitset_level "
+				+ ", cast(? as double) as lucene_level ")){
+			ps.setLong(1, workflowId);
+			ps.setString(2, clusterLabel);
+			ps.setObject(3, bitsetLevel);
+			ps.setObject(4, luceneLevel);
+			ps.execute();
+		};
+
+		
+		try(PreparedStatement ps = conn.prepareStatement(
+				"create /*memory local temporary*/ table t$link as "
+						+ " select "
+						+ "   l.id  as link_id , "
+						+ "   l.bit_set_exact_similarity as bitset_level, "
+						+ "   l.lucine_sample_term_similarity as  lucene_level, "
+						+ "   l.parent_column_info_id as parent_id, "
+						+ "   l.child_column_info_id as child_id, "
+						+ "   cast(pi.min_val as double) parent_min_val,"
+						+ "   cast(pi.max_val as double) parent_max_val,"
+						+ "   cast(ci.min_val as double) child_min_val,"
+						+ "   cast(ci.max_val as double) child_max_val,"
+						+ "	  greatest( cast(pi.min_val as double), "
+						+ "             cast(ci.min_val as double)) as link_min, "
+						+ "	  least( cast(pi.max_val as double), "
+						+ "          cast(ci.max_val as double)) as link_max "
+						+ "	 from link l "
+						+ "	     inner join column_info ci on ci.id = l.child_column_info_id "
+						+ "	     inner join column_info pi on pi.id = l.parent_column_info_id "
+						+ "      inner join column_numeric_real_type rtc on rtc.real_type = ci.real_type"
+						+ "      inner join column_numeric_real_type rtp on rtp.real_type = pi.real_type"
+						+ "   inner join t$param p"
+						+ "    on ((l.bit_set_exact_similarity >= p.bitset_level or p.bitset_level is null) or "
+						+ "        (l.lucine_sample_term_similarity >= p.lucene_level or p.lucene_level is null)) "
+						+ "	   where pi.min_val is not null "
+						+ "      and pi.max_val is not null "
+						+ "      and ci.min_val is not null "
+						+ "      and ci.max_val is not null "
+						+ "      and l.workflow_id = ?  ")){
+			ps.setLong(1, workflowId);
+			ps.execute();
+		}
+
+		execSQL("create hash index t$link_parent_id on t$link(parent_id)");
+		execSQL("create hash index t$link_child_id on t$link(child_id)");
+		
+		execSQL("create /*memory local temporary*/ table t$queue ("
+				+ "column_id bigint primary key "
+				+ ",min_val double, max_val double )");
+
+		execSQL("create /*memory local temporary*/ table t$column ("
+				+ "column_id bigint primary key "
+				+ ",cluster_number bigint"
+				+ ",processing_order bigint"
+				+ ",min_val double, max_val double"
+				+ ")");
+		
+		
+		conn.setAutoCommit(true);
+
+		while (true) {
+			//Queue<Long> leadingColumnIds = new LinkedList<>();
+			//Queue<Long> drivenColumnIds = null;
+			execSQL("truncate table t$queue");
+			try(PreparedStatement ps = conn.prepareStatement(
+							"  merge into t$queue(column_id,min_val,max_val) key(column_id) "
+							+ " select top 1 column_id, min_val, max_val "
+							+ " from ("
+							+ "   select t.parent_id as column_id  "
+							+ "    ,count(*) as  pairs "
+							+ "    ,c.min_val, c.max_val"
+							+ "    ,c.max_val - c.min_val as range_val"
+							+ "    from t$link t "
+							+ "   inner join column_info_numeric_range_view c "
+							+ "     on c.id = t.parent_id "
+							+ "   left outer join t$column cp "
+							+ "     on cp.column_id = t.parent_id "
+							+ "   left outer join t$column cc "
+							+ "     on cc.column_id = t.child_id "
+							+ "   where cp.column_id is null and cc.column_id is null"
+							+ "    group by t.parent_id,c.min_val, c.max_val "
+							+ "    having pairs"
+							+ "  union "
+							+ "	 select t.child_id as column_id "
+							+ "    ,count(*) as  pairs "
+							+ "    ,c.min_val, c.max_val "
+							+ "    ,c.max_val - c.min_val as range_val "
+							+ "    from t$link t "
+							+ "   inner join column_info_numeric_range_view c "
+							+ "     on c.id = t.child_id "
+							+ "  left outer join t$column cp "
+							+ "    on cp.column_id = t.parent_id "
+							+ "  left outer join t$column cc "
+							+ "    on cc.column_id = t.child_id "
+							+ "  where cp.column_id is null and cc.column_id is null"
+							+ "   group by t.child_id,c.min_val, c.max_val "
+							+ "   having pairs > 1"
+							+ " order by pairs desc, range_val desc"
+							+ " )"
+							)){
+					int count = ps.executeUpdate();
+					if ( count == 0) break;
+				}
+				while(true) {
+					try(PreparedStatement ps = conn.prepareStatement(
+								" insert into t$queue(column_id,min_val,max_val) "
+								+ " select c.id,c.min_val,c.max_val "
+								+ " from ( "
+								+ " select "
+								+ "  t.child_id  as column_id"
+								+ "  from t$queue h "
+								+ "   inner join t$link t  on t.parent_id = h.column_id"
+								+ "  left outer join t$column c "
+								+ "   on c.column_id = t.child_id "
+								+ "  where c.column_id is null "
+								+ " union "
+								+ " select "
+								+ "  t.parent_id as column_id"
+								+ "  from t$queue h "
+								+ "   inner join t$link t on t.child_id = h.column_id"
+								+ "  left outer join t$column c "
+								+ "   on c.column_id = t.parent_id "
+								+ "  where c.column_id is null "
+								+ " minus "
+								+ " select column_id from t$queue"
+								+ ") t inner join column_info_numeric_range_view c on c.id = t.column_id ")) {
+						
+						int count = ps.executeUpdate();
+						if ( count == 0) break;
+					
+					}
+				}
+		
+		
+		
+				while (true) {
+					//Queue<Long> leadingColumnIds = new LinkedList<>();
+					//Queue<Long> drivenColumnIds = null; 
+					BigDecimal clusterMinValue = null, clusterMaxValue = null,clusterRangeValue = null;
+					BigDecimal columnMinValue = null, columnMaxValue = null, columnRangeValue = null;
+					
+					try(Statement st = conn.createStatement();
+							ResultSet rs = st.executeQuery(
+									"  select "
+									+ " t.column_id "
+									+ " ,t.max_val - t.min_val as range_val"
+									+ " ,t.min_val, t.max_val"
+									+ "  from t$queue t "
+									+ "  left outer join t$column c "
+									+ "   on c.column_id = t.column_id  "
+									+ " where c.column_id is null "
+									+ " order by range_val desc ")){
+						while(rs.next()) {
+							 
+							 Long columnId = rs.getLong("column_id");
+							 columnRangeValue = rs.getBigDecimal("range_val");
+							 columnMinValue = rs.getBigDecimal("min_val");
+							 columnMaxValue = rs.getBigDecimal("max_val");
+							 
+							 if (clusterRangeValue == null) {
+									clusterMinValue = columnMinValue;
+									clusterMaxValue = columnMaxValue;	
+									clusterRangeValue = columnRangeValue;
+									processingOrder = 0;
+									saveClusteredColumnId(columnId, ++clusterNumber, ++processingOrder,clusterMinValue,clusterMaxValue);
+									continue;
+								}
+							 
+							//!!Here is the place where transitive link filter happens
+							if( false || columnMinValue.compareTo(clusterMaxValue) <= 0 && 
+									columnMaxValue.compareTo(clusterMinValue) >= 0 ) {
+								
+								if(columnMinValue.compareTo(clusterMinValue) > 0 ) clusterMinValue = columnMinValue;
+								if(columnMaxValue.compareTo(clusterMaxValue) < 0 ) clusterMaxValue = columnMaxValue;
+								saveClusteredColumnId(columnId, clusterNumber, ++processingOrder,clusterMinValue,clusterMaxValue);
+							 
+							}
+						}
+					}
+					if (processingOrder <3) {
+						break;
+					}
+				}
+				
+		}
+		
+		execSQL("delete from link_clustered_column c "
+				+ " where (c.workflow_id,c.cluster_label) = ("
+				+ "  select p.workflow_id,p.cluster_label from t$param p "
+				+ ")");
+		
+	 
+		//Reoredering cluster numbers and saving collected columns
+		boolean updated = false; 
+		try(Statement ps = conn.createStatement()){
+			updated = 0 != ps.executeUpdate(	
+					"insert into link_clustered_column(workflow_id, cluster_label, column_info_id,cluster_number,processing_order) "
+							+ " direct "
+							+ " select p.workflow_id "
+							+ "       ,p.cluster_label "
+							+ "       ,t.column_id "
+							+ "       ,i.renumbered_cluster_number"
+							+ "       ,t.processing_order "
+							+ "    from t$param p"
+							+ "    cross join ("
+							+ "       select "
+							+ "         rownum as renumbered_cluster_number,"
+							+ "         cluster_number from (	"
+							+ "            select ti.cluster_number "
+							+ "	         	from t$column ti "
+							+ "             where ti.cluster_number>0 "
+							+ "		        group by ti.cluster_number "
+							+ "		        having count(ti.column_id) >=3 " //a cluster must have 3 or more columns
+							+ "           ) "
+							+ "        ) i "
+							+ "       inner join t$column t "
+							+ "    on t.cluster_number = i.cluster_number " 
+							+ " ");
+		}
+		if(updated) {
+			execSQL("merge into link_clustered_column_param ( "
+					+ " workflow_id "
+					+ ",cluster_label "
+					+ ",bitset_level "
+					+ ",lucene_level "
+					+ ") key (workflow_id, cluster_label) "
+					+ "select "
+					+ " p.workflow_id "
+					+ ", p.cluster_label "
+					+ ", p.bitset_level "
+					+ ", p.lucene_level "
+					+ " from t$param p"
+					);
+			conn.commit();
+		}
+		conn.rollback();
+			
+		
+	}
+
+
 	
 	
 	static final BigDecimal SequenceDeviationThreshold = new BigDecimal(0.03f);
@@ -1372,7 +1675,8 @@ where workflow_id = 66 and parent_column_info_id = 947
 				+ "      ,cast(case when rt.real_type is not null then c.max_val end as double) as max_val "
 				+ " from column_info c "
 				+ "  left outer join column_numeric_real_type rt on rt.real_type = c.real_type "
-    );
+				);
+		execSQL(columnInfoNumericRangeView);
   }
 	
 	private static ColumnStats getColStats(BigDecimal columnId) throws SQLException {
