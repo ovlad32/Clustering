@@ -1028,7 +1028,7 @@ where workflow_id = 66 and parent_column_info_id = 947
 				+ ")");
 		
 	 
-		//Reoredering cluster numbers and saving collected columns
+		//Reordering cluster numbers and saving collected columns
 		boolean updated = false; 
 		try(Statement ps = conn.createStatement()){
 			updated = 0 != ps.executeUpdate(	
@@ -1226,7 +1226,7 @@ static void createNumeric2Clusters(String clusterLabel, Long workflowId, Float b
 							+ "     on cc.column_id = t.child_id "
 							+ "   where cp.column_id is null and cc.column_id is null"
 							+ "    group by t.parent_id,c.min_val, c.max_val "
-							+ "    having pairs"
+							+ "    having pairs > 1"
 							+ "  union "
 							+ "	 select t.child_id as column_id "
 							+ "    ,count(*) as  pairs "
@@ -1278,17 +1278,17 @@ static void createNumeric2Clusters(String clusterLabel, Long workflowId, Float b
 					}
 				}
 		
-		
+				
 		
 				while (true) {
 					//Queue<Long> leadingColumnIds = new LinkedList<>();
 					//Queue<Long> drivenColumnIds = null; 
-					BigDecimal clusterMinValue = null, clusterMaxValue = null,clusterRangeValue = null;
-					BigDecimal columnMinValue = null, columnMaxValue = null, columnRangeValue = null;
+					BigDecimal clusterMinValue = null, clusterMaxValue = null;
+					BigDecimal columnMinValue = null, columnMaxValue = null;
 					
 					try(Statement st = conn.createStatement();
 							ResultSet rs = st.executeQuery(
-									"  select "
+									"  select top 1"
 									+ " t.column_id "
 									+ " ,t.max_val - t.min_val as range_val"
 									+ " ,t.min_val, t.max_val"
@@ -1297,30 +1297,50 @@ static void createNumeric2Clusters(String clusterLabel, Long workflowId, Float b
 									+ "   on c.column_id = t.column_id  "
 									+ " where c.column_id is null "
 									+ " order by range_val desc ")){
-						while(rs.next()) {
-							 
+						if (rs.next()) {
 							 Long columnId = rs.getLong("column_id");
-							 columnRangeValue = rs.getBigDecimal("range_val");
-							 columnMinValue = rs.getBigDecimal("min_val");
-							 columnMaxValue = rs.getBigDecimal("max_val");
-							 
-							 if (clusterRangeValue == null) {
-									clusterMinValue = columnMinValue;
-									clusterMaxValue = columnMaxValue;	
-									clusterRangeValue = columnRangeValue;
-									processingOrder = 0;
-									saveClusteredColumnId(columnId, ++clusterNumber, ++processingOrder,clusterMinValue,clusterMaxValue);
-									continue;
+							 clusterMinValue = rs.getBigDecimal("min_val");
+							 clusterMaxValue = rs.getBigDecimal("max_val");
+  							 processingOrder = 0;
+							 saveClusteredColumnId(columnId, ++clusterNumber, ++processingOrder,clusterMinValue,clusterMaxValue);
+						} else {
+							break;
+						}
+					}
+
+					try(PreparedStatement pst = conn.prepareStatement(
+									"  select "
+									+ "  t.column_id "
+									+ "  ,least(p.max_val,t.max_val)  "
+									+ "    - greatest(p.min_val,t.min_val) as range_val"
+									+ "  ,t.min_val"
+									+ "  ,t.max_val"
+									+ " from t$queue t "
+									+ "  cross join ( select "
+									+ "   cast(? as double) as min_val"
+									+ "   ,cast(? as double) as max_val"
+									+ "  ) p "
+									+ "  left outer join t$column c "
+									+ "   on c.column_id = t.column_id  "
+									+ " where c.column_id is null "
+									+ " order by range_val desc "))	{
+						pst.setBigDecimal(1, clusterMinValue);
+						pst.setBigDecimal(2, clusterMaxValue);
+						try (ResultSet rs = pst.executeQuery()){ 
+							while(rs.next()) {
+								 Long columnId = rs.getLong("column_id");
+								 columnMinValue = rs.getBigDecimal("min_val");
+								 columnMaxValue = rs.getBigDecimal("max_val");
+
+								 //!!Here is the place where transitive link filter happens
+								 if( false || columnMinValue.compareTo(clusterMaxValue) <= 0 && 
+										columnMaxValue.compareTo(clusterMinValue) >= 0 ) {
+									
+									if(columnMinValue.compareTo(clusterMinValue) > 0 ) clusterMinValue = columnMinValue;
+									if(columnMaxValue.compareTo(clusterMaxValue) < 0 ) clusterMaxValue = columnMaxValue;
+									saveClusteredColumnId(columnId, clusterNumber, ++processingOrder,clusterMinValue,clusterMaxValue);
+								 
 								}
-							 
-							//!!Here is the place where transitive link filter happens
-							if( false || columnMinValue.compareTo(clusterMaxValue) <= 0 && 
-									columnMaxValue.compareTo(clusterMinValue) >= 0 ) {
-								
-								if(columnMinValue.compareTo(clusterMinValue) > 0 ) clusterMinValue = columnMinValue;
-								if(columnMaxValue.compareTo(clusterMaxValue) < 0 ) clusterMaxValue = columnMaxValue;
-								saveClusteredColumnId(columnId, clusterNumber, ++processingOrder,clusterMinValue,clusterMaxValue);
-							 
 							}
 						}
 					}
