@@ -29,6 +29,7 @@ public class ClusteringLauncher {
 	// Clustering.jar a --url tcp://52.59.69.151:9090/./data/h2/edm --uid edm --pwd edmedm --wid 57 --label L2 --bl 0.1 --outfile res.html
 	//c --url tcp://52.59.69.151:9090/./data/h2/edm --uid edm --pwd edmedm --wid 162 --label L129 --bl 0.1 --bucket 1000 --outfile res.html
 	// c --url tcp://52.29.37.253:9090/./data/h2/edm --uid edm --pwd edmedm --wid 290 --label LabelTest --bl 0.01 --outfile res.html
+	//c --url tcp://52.29.37.253:9090/./data/h2/edm --uid edm --pwd edmedm --wid 225 --label LabelTest --bl 0.01
 	static Connection conn;
 	static boolean workingTableTemporary = false;
 /*
@@ -504,7 +505,7 @@ where workflow_id = 66 and parent_column_info_id = 947
 
 				deleteClusters(parsedArgs.getProperty("label"), longOf(parsedArgs.getProperty("wid")));
 
-				createNumericClustersV2(parsedArgs.getProperty("label"), longOf(parsedArgs.getProperty("wid")),
+				createNumericClustersV3(parsedArgs.getProperty("label"), longOf(parsedArgs.getProperty("wid")),
 						floatOf(parsedArgs.getProperty("bl")), floatOf(parsedArgs.getProperty("ll")));
 				if (parsedArgs.containsKey("outfile")) {
 					reportClusters(parsedArgs.getProperty("label"), longOf(parsedArgs.getProperty("wid")),
@@ -1415,15 +1416,12 @@ static void createNumericClustersV2(String clusterLabel, Long workflowId, Float 
 
 
 
-static void removeColumnIdFromQueueV3(Long columnId) {
-	
-}
 
-public static class Nc$boundaries {
+public static class Boundaries {
 	BigDecimal lower, upper;
 }
 
-public static class Nc$column {
+public static class Column {
 	Long id;
 	BigDecimal minValue;
 	BigDecimal maxValue;
@@ -1444,7 +1442,7 @@ public static class Nc$column {
 			return false;
 		if (getClass() != obj.getClass())
 			return false;
-		Nc$column other = (Nc$column) obj;
+		Column other = (Column) obj;
 		if (id == null) {
 			if (other.id != null)
 				return false;
@@ -1468,13 +1466,13 @@ public static class Nc$column {
 		this.maxValue = maxValue;
 	}
 		
-	Nc$column(Long id, BigDecimal minValue, BigDecimal maxValue) {
+	Column(Long id, BigDecimal minValue, BigDecimal maxValue) {
 		super();
 		init(id,minValue,maxValue);
 	}
 	
 	
-	Nc$column(Long id) {
+	Column(Long id) throws SQLException {
 		if (id == null) {
 			throw new NullPointerException("ColumnId is null!");
 		}
@@ -1506,10 +1504,10 @@ public static class Nc$column {
 		}
 	}
 	
-	boolean saveAsClustered(Long clusterNumber,Long processingOrder, Nc$boundaries boundaries ) {
+	boolean saveAsClustered(Long clusterNumber,Long processingOrder, Boundaries boundaries ) {
 		boolean result;
 		try(PreparedStatement psu = conn.prepareStatement(
-				"merge into t$column(column_id,cluster_number,processing_order,upper_bound,lower_bound) "
+				"merge into t$column(column_id,cluster_number,processing_order,lower_bound,upper_bound) "
 				+" key(column_id,cluster_number) "
 				+" values(?,?,?,?,?)")) {
 
@@ -1524,7 +1522,7 @@ public static class Nc$column {
 		}
 		
 		try (PreparedStatement psd = conn.prepareStatement(
-				"delete from t$queue where column_id = ?")){
+				"update t$queue set excluded = true where column_id = ?")){
 			psd.setLong(1, this.id);
 			psd.executeUpdate();
 		} catch(SQLException e) {
@@ -1535,14 +1533,14 @@ public static class Nc$column {
 		return result;
 	}
 		
-	boolean isFit(Nc$boundaries boundaries) {
+	boolean isFit(Boundaries boundaries) {
 		return this.minValue.compareTo(boundaries.upper) <= 0 && 
 				this.maxValue.compareTo(boundaries.lower) >= 0 ;
 	}
 	
-	void shorten(Nc$boundaries boundaries) {
+	void shorten(Boundaries boundaries) {
 		if(this.minValue.compareTo(boundaries.lower) > 0 ) boundaries.lower = this.minValue;
-		if(this.maxValue.compareTo(boundaries.upper) < 0 ) boundaries.lower = this.maxValue;
+		if(this.maxValue.compareTo(boundaries.upper) < 0 ) boundaries.upper = this.maxValue;
 	}
 
 }
@@ -1622,20 +1620,36 @@ static void nc$initializeWorkingTables(Long workflowId,String clusterLabel,Float
 	
 	execSQL("create  "+getWorkingTableModifierString()+" table t$queue ("
 			+ "column_id bigint primary key "
-			+ ",min_val double, max_val double )");
+			+ ",min_val double, max_val double,excluded boolean default false)");
 
 	execSQL("create  "+getWorkingTableModifierString()+" table t$column ("
 			+ "column_id bigint "
 			+ ",cluster_number bigint "
 			+ ",processing_order bigint "
-			+ ",upper_bound double, lower_bound double "
+			+ ",lower_bound double,upper_bound double "
 			+ ",constraint t$column_pk primary key(column_id,cluster_number))");
 	
 	
 	conn.setAutoCommit(true);
 }
 
-static void nc$populateLinkedColumns() throws SQLException{
+static void nc$populateLinkedColumns(Column column) throws SQLException{
+	try (PreparedStatement ps = conn.prepareStatement(
+			"select 'Y' from t$queue where column_id = ?")
+			){
+		ps.setLong(1,column.id);
+		try(ResultSet rs = ps.executeQuery()) { 
+			// column was added to the queue in theprevious step 
+			if (rs.next()) {
+				execSQL("update t$queue set excluded = false");
+				return;
+			} else {
+				execSQL("truncate table t$queue");
+				column.saveToQueue();
+		  }
+		}
+	}
+	
 	while(true) {
 		try(PreparedStatement ps = conn.prepareStatement(
 					" insert into t$queue(column_id,min_val,max_val) "
@@ -1660,7 +1674,7 @@ static void nc$populateLinkedColumns() throws SQLException{
 	}
 }
 
-static Nc$column fetchMostUbiquitousColumn() throws SQLException {
+static Column fetchMostUbiquitousColumn() throws SQLException {
 	
 	try(Statement ps = conn.createStatement();
 				ResultSet rs = ps.executeQuery(
@@ -1697,110 +1711,75 @@ static Nc$column fetchMostUbiquitousColumn() throws SQLException {
 		if (!rs.next()) 
 			return null;
 		else {
-			Nc$column result = new Nc$column(
+			Column result = new Column(
 					rs.getLong(1),
 					rs.getBigDecimal(2),
 					rs.getBigDecimal(3));
-			result.saveToQueue();
+			return result;
 		}
 	}
 }
 
 static void createNumericClustersV3(String clusterLabel, Long workflowId, Float bitsetLevel, Float luceneLevel) throws SQLException {
-	
-	
-		
-	
+
 	long clusterNumber = 0;
-	long processingOrder = 0;
+	
 
 	nc$initializeWorkingTables(workflowId,clusterLabel,bitsetLevel,luceneLevel);
 	
 	
 
-	Nc$column leadingColumn = null;
+	Column leadingColumn = null;
 	while (true) {
 		
 		//Queue<Long> leadingColumnIds = new LinkedList<>();
 		//Queue<Long> drivenColumnIds = null;
+		leadingColumn = fetchMostUbiquitousColumn();
 		if (leadingColumn == null) {
-			leadingColumn = fetchMostUbiquitousColumn();
-			if (leadingColumn == null) {
-				break;
-			}
+			break;
 		}
 		 
-		nc$populateLinkedColumns();
+		nc$populateLinkedColumns(leadingColumn);
 	
-			
-	
-		while (true) {
-			Nc$boundaries clusterBoundaries = new Nc$boundaries();
-			clusterBoundaries.lower = leadingColumn.minValue;
-			clusterBoundaries.upper = leadingColumn.maxValue;
-			leadingColumn.saveAsClustered( ++clusterNumber, ++processingOrder, clusterBoundaries);
-			
-				//Queue<Long> leadingColumnIds = new LinkedList<>();
-				//Queue<Long> drivenColumnIds = null; 
-			/*	BigDecimal clusterMinValue = null, clusterMaxValue = null;
-				BigDecimal columnMinValue = null, columnMaxValue = null;
-				try(Statement st = conn.prepareStatement(
-								"  select top 1"
-								+ " t.column_id "
-								+ " ,t.max_val - t.min_val as range_val"
-								+ " ,t.min_val, t.max_val"
-								+ "  from t$queue t "
-								+ (leadingColumnId == null? "":String.format(" where t.column_id = ?"))
-								+ " order by range_val desc ")){
-					if (rs.next()) {
-						leadingColumnId = rs.getLong("column_id");
-						clusterMinValue = rs.getBigDecimal("min_val");
-						clusterMaxValue = rs.getBigDecimal("max_val");
-						processingOrder = 0;
-						saveClusteredColumnIdV3(leadingColumnId, ++clusterNumber, ++processingOrder,clusterMinValue,clusterMaxValue);
-						removeColumnIdFromQueueV3(leadingColumnId);
-					} else {
-						execSQL("delete from  t$column where cluster_number in "
-								+ "(select cluster_number from t$column "
-								+ "	group by cluster_number having count(1)<3)");
-						break;
-					}
-					}
-				}*/
-				
-				try(PreparedStatement pst = conn.prepareStatement(
-								"  select "
-								+ "  t.column_id "
-								+ "  ,least(p.max_val,t.max_val)  "
-								+ "    - greatest(p.min_val,t.min_val) as range_val"
-								+ "  ,t.min_val"
-								+ "  ,t.max_val"
-								+ " from t$queue t "
-								+ "  cross join ( select "
-								+ "   cast(? as double) as min_val"
-								+ "   ,cast(? as double) as max_val"
-								+ "  ) p "
-								+ " order by range_val desc "))	{
-					pst.setBigDecimal(1, clusterBoundaries.lower);
-					pst.setBigDecimal(2, clusterBoundaries.upper);
-					try (ResultSet rs = pst.executeQuery()){ 
-						while(rs.next()) {
-							Nc$column column = new Nc$column(
-										rs.getLong("column_id"),
-										rs.getBigDecimal("min_val"),
-										rs.getBigDecimal("max_val")
-									);
-									
-							 //!!Here is the place where transitive link filter happens
-							if (column.isFit(clusterBoundaries)) {
-								column.shorten(clusterBoundaries);
-								column.saveAsClustered(clusterNumber, processingOrder, clusterBoundaries);
-							}
-						}
+		Boundaries clusterBoundaries = new Boundaries();
+		clusterBoundaries.lower = leadingColumn.minValue;
+		clusterBoundaries.upper = leadingColumn.maxValue;
+		long processingOrder = 0;
+		leadingColumn.saveAsClustered( ++clusterNumber, ++processingOrder, clusterBoundaries);
+		
+		try(PreparedStatement pst = conn.prepareStatement(
+						"  select "
+						+ "  t.column_id "
+						+ "  ,least(p.max_val,t.max_val)  "
+						+ "    - greatest(p.min_val,t.min_val) as range_val"
+						+ "  ,t.min_val"
+						+ "  ,t.max_val"
+						+ " from t$queue t "
+						+ "  cross join ( select "
+						+ "   cast(? as double) as min_val"
+						+ "   ,cast(? as double) as max_val"
+						+ "  ) p "
+						+ " where t.excluded = false "
+						+ " order by range_val desc "))	{
+			pst.setBigDecimal(1, clusterBoundaries.lower);
+			pst.setBigDecimal(2, clusterBoundaries.upper);
+			try (ResultSet rs = pst.executeQuery()){ 
+				while(rs.next()) {
+					Column column = new Column(
+								rs.getLong("column_id"),
+								rs.getBigDecimal("min_val"),
+								rs.getBigDecimal("max_val")
+							);
+							
+					 //!!Here is the place where transitive link filter happens
+					if (column.isFit(clusterBoundaries)) {
+						column.shorten(clusterBoundaries);
+						column.saveAsClustered(clusterNumber, ++processingOrder, clusterBoundaries);
 					}
 				}
-				
 			}
+		}
+			
 			
 	}
 	
