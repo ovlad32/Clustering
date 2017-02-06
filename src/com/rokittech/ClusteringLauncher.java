@@ -4,6 +4,8 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.math.MathContext;
+import java.math.RoundingMode;
 import java.sql.Connection;
 import java.sql.Driver;
 import java.sql.PreparedStatement;
@@ -22,6 +24,8 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 
+import javax.swing.ButtonGroup;
+
 import com.zaxxer.sparsebits.SparseBitSet;
 
 
@@ -31,7 +35,7 @@ public class ClusteringLauncher {
 	// c --url tcp://52.29.37.253:9090/./data/h2/edm --uid edm --pwd edmedm --wid 290 --label LabelTest --bl 0.01 --outfile res.html
 	//c --url tcp://52.29.37.253:9090/./data/h2/edm --uid edm --pwd edmedm --wid 225 --label LabelTest --bl 0.01
 	static Connection conn;
-	static boolean workingTableTemporary = false;
+	static boolean workingTableTemporary = true;
 /*
  
 			select * from link_clustered_column where workflow_id = 66
@@ -836,7 +840,7 @@ where workflow_id = 66 and parent_column_info_id = 947
 		
 		
 		try(PreparedStatement ps = conn.prepareStatement(
-				"create /*memory local temporary*/ table t$link as "
+				"create "+getWorkingTableModifierString()+" table t$link as "
 						+ " select "
 						+ "   l.id  as link_id , "
 						+ "   l.bit_set_exact_similarity as bitset_level, "
@@ -1162,7 +1166,7 @@ static void createNumericClustersV2(String clusterLabel, Long workflowId, Float 
 
 		
 		try(PreparedStatement ps = conn.prepareStatement(
-				"create /*memory local temporary*/ table t$link as "
+				"create "+getWorkingTableModifierString()+" table t$link as "
 						+ " select "
 						+ "   l.id  as link_id , "
 						+ "   l.bit_set_exact_similarity as bitset_level, "
@@ -1417,14 +1421,15 @@ static void createNumericClustersV2(String clusterLabel, Long workflowId, Float 
 
 
 
-public static class Boundaries {
-	BigDecimal lower, upper;
+public static class NCBoundaries {
+	private BigDecimal lower, upper, initialRange;
 }
 
-public static class Column {
-	Long id;
-	BigDecimal minValue;
-	BigDecimal maxValue;
+public static class NCColumn {
+	private Long id;
+	private BigDecimal minValue;
+	private BigDecimal maxValue;
+	
 	
 	@Override
 	public int hashCode() {
@@ -1442,7 +1447,7 @@ public static class Column {
 			return false;
 		if (getClass() != obj.getClass())
 			return false;
-		Column other = (Column) obj;
+		NCColumn other = (NCColumn) obj;
 		if (id == null) {
 			if (other.id != null)
 				return false;
@@ -1466,13 +1471,13 @@ public static class Column {
 		this.maxValue = maxValue;
 	}
 		
-	Column(Long id, BigDecimal minValue, BigDecimal maxValue) {
+	NCColumn(Long id, BigDecimal minValue, BigDecimal maxValue) {
 		super();
 		init(id,minValue,maxValue);
 	}
 	
 	
-	Column(Long id) throws SQLException {
+	NCColumn(Long id) throws SQLException {
 		if (id == null) {
 			throw new NullPointerException("ColumnId is null!");
 		}
@@ -1504,18 +1509,24 @@ public static class Column {
 		}
 	}
 	
-	boolean saveAsClustered(Long clusterNumber,Long processingOrder, Boundaries boundaries ) {
+	boolean saveAsClustered(Long clusterNumber,Long processingOrder, NCBoundaries boundaries ) {
 		boolean result;
 		try(PreparedStatement psu = conn.prepareStatement(
-				"merge into t$column(column_id,cluster_number,processing_order,lower_bound,upper_bound) "
-				+" key(column_id,cluster_number) "
-				+" values(?,?,?,?,?)")) {
+				"merge into t$column(column_id"
+				+ ",cluster_number"
+				+ ",processing_order"
+				+ ",initial_range"
+				+ ",lower_bound"
+				+ ",upper_bound"
+				+ ") key (column_id,cluster_number) "
+				+" values(?,?,?,?,?,?)")) {
 
 		psu.setLong(1, this.id);
 		psu.setLong(2, clusterNumber);
 		psu.setLong(3, processingOrder);
-		psu.setBigDecimal(4, boundaries.lower);
-		psu.setBigDecimal(5, boundaries.upper);
+		psu.setBigDecimal(4, boundaries.initialRange);
+		psu.setBigDecimal(5, boundaries.lower);
+		psu.setBigDecimal(6, boundaries.upper);
 		result = psu.executeUpdate()>0; 
 		} catch(SQLException e) {
 			throw new RuntimeException(String.format("Exception while saving clustered column column_id=%d",this.id),e);
@@ -1533,12 +1544,12 @@ public static class Column {
 		return result;
 	}
 		
-	boolean isFit(Boundaries boundaries) {
+	boolean isFit(NCBoundaries boundaries) {
 		return this.minValue.compareTo(boundaries.upper) <= 0 && 
 				this.maxValue.compareTo(boundaries.lower) >= 0 ;
 	}
 	
-	void shorten(Boundaries boundaries) {
+	void shorten(NCBoundaries boundaries) {
 		if(this.minValue.compareTo(boundaries.lower) > 0 ) boundaries.lower = this.minValue;
 		if(this.maxValue.compareTo(boundaries.upper) < 0 ) boundaries.upper = this.maxValue;
 	}
@@ -1626,6 +1637,7 @@ static void nc$initializeWorkingTables(Long workflowId,String clusterLabel,Float
 			+ "column_id bigint "
 			+ ",cluster_number bigint "
 			+ ",processing_order bigint "
+			+ ",initial_range double "
 			+ ",lower_bound double,upper_bound double "
 			+ ",constraint t$column_pk primary key(column_id,cluster_number))");
 	
@@ -1633,7 +1645,7 @@ static void nc$initializeWorkingTables(Long workflowId,String clusterLabel,Float
 	conn.setAutoCommit(true);
 }
 
-static void nc$populateLinkedColumns(Column column) throws SQLException{
+static void nc$populateLinkedColumns(NCColumn column) throws SQLException{
 	try (PreparedStatement ps = conn.prepareStatement(
 			"select 'Y' from t$queue where column_id = ?")
 			){
@@ -1674,11 +1686,11 @@ static void nc$populateLinkedColumns(Column column) throws SQLException{
 	}
 }
 
-static Column fetchMostUbiquitousColumn() throws SQLException {
+static NCColumn nc$fetchMostUbiquitousColumn() throws SQLException {
 	
 	try(Statement ps = conn.createStatement();
 				ResultSet rs = ps.executeQuery(
-				" select top 1 column_id, min_val, max_val "
+				" select top 1 column_id, min_val, max_val, pairs, range_val "
 				+ " from ("
 				+ "   select t.parent_id as column_id  "
 				+ "    ,count(*) as  pairs "
@@ -1705,13 +1717,12 @@ static Column fetchMostUbiquitousColumn() throws SQLException {
 				+ "  where  cc.column_id is null"
 				+ "   group by t.child_id,c.min_val, c.max_val "
 				+ "   having pairs > 1"
-				+ " order by pairs desc, range_val desc"
-				+ " )"
+				+ ")  order by range_val desc,pairs desc"
 				)){
 		if (!rs.next()) 
 			return null;
 		else {
-			Column result = new Column(
+			NCColumn result = new NCColumn(
 					rs.getLong(1),
 					rs.getBigDecimal(2),
 					rs.getBigDecimal(3));
@@ -1723,37 +1734,38 @@ static Column fetchMostUbiquitousColumn() throws SQLException {
 static void createNumericClustersV3(String clusterLabel, Long workflowId, Float bitsetLevel, Float luceneLevel) throws SQLException {
 
 	long clusterNumber = 0;
+	BigDecimal rangeLimit = new BigDecimal(.2);
+	rangeLimit.setScale(5, RoundingMode.FLOOR);
 	
 
 	nc$initializeWorkingTables(workflowId,clusterLabel,bitsetLevel,luceneLevel);
 	
 	
 
-	Column leadingColumn = null;
+	NCColumn leadingColumn = null;
 	while (true) {
 		
 		//Queue<Long> leadingColumnIds = new LinkedList<>();
 		//Queue<Long> drivenColumnIds = null;
-		leadingColumn = fetchMostUbiquitousColumn();
+		leadingColumn = nc$fetchMostUbiquitousColumn();
 		if (leadingColumn == null) {
 			break;
 		}
 		 
 		nc$populateLinkedColumns(leadingColumn);
 	
-		Boundaries clusterBoundaries = new Boundaries();
+		NCBoundaries clusterBoundaries = new NCBoundaries();
 		clusterBoundaries.lower = leadingColumn.minValue;
 		clusterBoundaries.upper = leadingColumn.maxValue;
 		long processingOrder = 0;
 		leadingColumn.saveAsClustered( ++clusterNumber, ++processingOrder, clusterBoundaries);
-		
 		try(PreparedStatement pst = conn.prepareStatement(
-						"  select "
+						" select "
 						+ "  t.column_id "
 						+ "  ,least(p.max_val,t.max_val)  "
-						+ "    - greatest(p.min_val,t.min_val) as range_val"
-						+ "  ,t.min_val"
-						+ "  ,t.max_val"
+						+ "    - greatest(p.min_val,t.min_val) as range_val "
+						+ "  ,t.min_val "
+						+ "  ,t.max_val "
 						+ " from t$queue t "
 						+ "  cross join ( select "
 						+ "   cast(? as double) as min_val"
@@ -1765,7 +1777,31 @@ static void createNumericClustersV3(String clusterLabel, Long workflowId, Float 
 			pst.setBigDecimal(2, clusterBoundaries.upper);
 			try (ResultSet rs = pst.executeQuery()){ 
 				while(rs.next()) {
-					Column column = new Column(
+					BigDecimal currentRange = rs.getBigDecimal("range_val"); 
+					if ( currentRange == null) continue;
+					
+					if (clusterBoundaries.initialRange == null) {
+						clusterBoundaries.initialRange = currentRange ;
+					} else {
+						BigDecimal result = currentRange.divide(
+								clusterBoundaries.initialRange,
+								5,
+								RoundingMode.FLOOR
+								);
+						//System.out.print(clusterNumber);
+						//System.out.print(" ");
+						//System.out.print(rs.getLong("column_id"));
+						//System.out.print(" ");
+						//System.out.print(result);
+						//System.out.print(" ");
+						//System.out.println(result.compareTo(rangeLimit));
+						
+						
+						if (result.compareTo(rangeLimit) < 0){ 
+							continue; 
+						}
+					}
+					NCColumn column = new NCColumn(
 								rs.getLong("column_id"),
 								rs.getBigDecimal("min_val"),
 								rs.getBigDecimal("max_val")
