@@ -160,7 +160,7 @@ where workflow_id = 66 and parent_column_info_id = 947
 		    + " and c.workflow_id  = t.workflow_id     "
 		    + " and c.cluster_label = t.cluster_label " 
 		    + " where c.column_info_id is null "
-		    + " and (ci.is_numeric_type = false or "
+		    + " and (ci.has_numeric_content = false or "
 		    /*+ "       t.upperbound is null or "
 		    + "       t.lowerbound is null or "*/
 		    + "      ((ci.min_val < t.upperbound and ci.max_val > t.lowerbound) and rownum <= 1) "                  
@@ -404,18 +404,6 @@ where workflow_id = 66 and parent_column_info_id = 947
 	  "  l.parent_db_name,l.parent_schema_name,l.parent_table_name, " +
 	  "  l.child_db_name,l.child_schema_name,l.child_table_name, bitset_group_num";
 
-	private static final String columnInfoNumericRangeView =
-	"CREATE OR REPLACE VIEW PUBLIC.COLUMN_INFO_NUMERIC_RANGE_VIEW AS "
-	+ "SELECT "
-	+ "  C.ID "
-	+ "  ,C.TABLE_INFO_ID "
-	+ "  ,CASE WHEN (RT.REAL_TYPE IS NOT NULL) THEN TRUE ELSE FALSE END AS IS_NUMERIC_TYPE "
-    + "  ,CAST(CASE WHEN (RT.REAL_TYPE IS NOT NULL) THEN C.MIN_VAL END AS DOUBLE) AS MIN_VAL "
-    +"   ,CAST(CASE WHEN (RT.REAL_TYPE IS NOT NULL) THEN C.MAX_VAL END AS DOUBLE) AS MAX_VAL "
-    +" FROM PUBLIC.COLUMN_INFO C /* PUBLIC.COLUMN_INFO.tableScan */ "
-    +" LEFT OUTER JOIN PUBLIC.COLUMN_NUMERIC_REAL_TYPE RT /* PUBLIC.PRIMARY_KEY_4A: REAL_TYPE = C.REAL_TYPE */ "
-    +"  ON RT.REAL_TYPE = C.REAL_TYPE ";
-    
     
 	private static void initH2(String url, String uid, String password) throws SQLException, RuntimeException,
 			InstantiationException, IllegalAccessException, ClassNotFoundException {
@@ -517,9 +505,12 @@ where workflow_id = 66 and parent_column_info_id = 947
 
 				execSQL(clusteredColumnTableDefinition);
 				execSQL(clusteredColumnParamTableDefinition);
-
+				
 				deleteClusters(parsedArgs.getProperty("label"), longOf(parsedArgs.getProperty("wid")));
 
+				covertVarcharMinMaxToNumeric(longOf(parsedArgs.getProperty("wid")));
+				
+				
 				createNumericClustersV3(parsedArgs.getProperty("label"), longOf(parsedArgs.getProperty("wid")),
 						floatOf(parsedArgs.getProperty("bl")), 
 						floatOf(parsedArgs.getProperty("ll")),
@@ -533,6 +524,9 @@ where workflow_id = 66 and parent_column_info_id = 947
 				System.out.println("Done.");
 			} else if ("a".equals(command)) {
 				initH2(parsedArgs.getProperty("url"), parsedArgs.getProperty("uid"), parsedArgs.getProperty("pwd"));
+				
+				covertVarcharMinMaxToNumeric(longOf(parsedArgs.getProperty("wid")));
+				
 				reportAllCoumnPairs(longOf(parsedArgs.getProperty("wid")),
 						parsedArgs.getProperty("outfile"));
 				System.out.println("Done.");
@@ -850,6 +844,55 @@ where workflow_id = 66 and parent_column_info_id = 947
 		conn.commit();
 	}
 	
+	static void covertVarcharMinMaxToNumeric(Long workflowId) throws SQLException {
+
+		if (workflowId == null) {
+			throw new RuntimeException("Error: Workflow ID has not been specified!");
+		}
+
+		
+		try (PreparedStatement ps = conn.prepareStatement(
+			"select distinct c.id, c.min_val, c.max_val from link l "
+			+ " inner join column_info cl on cl.id in (l.parent_column_info_id,l.child_column_info_id) "
+			+ " inner join table_info tl on tl.id = cl.table_info_id "
+			+ " inner join table_info t on t.metadata_id = tl.metadata_id "
+			+ " inner join column_info c on c.table_info_id = t.id "
+			+ " inner join column_numeric_real_type rt on rt.real_type = c.real_type "
+			+ " where (c.min_val is not null and c.max_val is not null) "
+			+ "   and (c.min_fval is null and c.max_fval is null) " 
+			+ "   and l.workflow_id = ?" )){
+			ps.setLong(1, workflowId);
+			try (ResultSet rs = ps.executeQuery()) {
+				while (rs.next()) {
+					BigDecimal id = rs.getBigDecimal(1);
+					String minValue = rs.getString(2), 
+							maxValue = rs.getString(3);
+					Double minFValue = null ,maxFValue= null ;
+					try {
+						minFValue = new Double(minValue);
+						maxFValue = new Double(maxValue);
+					
+					} catch(NumberFormatException e) {
+						continue;
+					}
+					if (minFValue != null && maxFValue != null) {
+						try (PreparedStatement ups = conn.prepareStatement(
+								"update column_info set "
+								+ "	has_numeric_content = true "
+								+ " ,min_fval = ?"
+								+ " ,max_fval = ?"
+								+ " where id = ?")) {
+							ups.setDouble(1, minFValue);
+							ups.setDouble(2, maxFValue);
+							ups.setBigDecimal(3,id);
+							ups.executeUpdate();	
+						}
+					}
+				}
+			}
+		};
+		conn.commit();
+	}
 	
 	static void createNumericClusters(String clusterLabel, Long workflowId, Float bitsetLevel, Float luceneLevel) throws SQLException {
 		
@@ -1659,21 +1702,17 @@ static void nc$initializeWorkingTables(
 					+ "   l.child_column_info_id as child_id, "
 					+ "   mpi.database_config_id as parent_db_id,"
 					+ "   mci.database_config_id as child_db_id,"
-					+ "   cast(pi.min_val as double) parent_min_val,"
-					+ "   cast(pi.max_val as double) parent_max_val,"
-					+ "   cast(ci.min_val as double) child_min_val,"
-					+ "   cast(ci.max_val as double) child_max_val,"
-					+ "	  greatest( cast(pi.min_val as double), "
-					+ "             cast(ci.min_val as double)) as link_min, "
-					+ "	  least( cast(pi.max_val as double), "
-					+ "          cast(ci.max_val as double)) as link_max "
+					+ "   pi.min_val as parent_min_val,"
+					+ "   pi.max_val as parent_max_val,"
+					+ "   ci.min_val as child_min_val,"
+					+ "   ci.max_val as child_max_val,"
+					+ "	  greatest(pi.min_val, ci.min_val) as link_min, "
+					+ "	  least(pi.max_val,ci.max_val) as link_max "
 					+ "	 from link l "
-					+ "	     inner join column_info ci on ci.id = l.child_column_info_id "
-					+ "      inner join column_numeric_real_type rtc on rtc.real_type = ci.real_type"
+					+ "	     inner join column_info_numeric_range_view ci on ci.id = l.child_column_info_id "
 					+ "      inner join table_info tci on tci.id = ci.table_info_id "
 					+ "      inner join metadata mci on mci.id = tci.metadata_id "
-					+ "	     inner join column_info pi on pi.id = l.parent_column_info_id "
-					+ "      inner join column_numeric_real_type rtp on rtp.real_type = pi.real_type"
+					+ "	     inner join column_info_numeric_range_view pi on pi.id = l.parent_column_info_id "
 					+ "      inner join table_info tpi on tpi.id = pi.table_info_id "
 					+ "      inner join metadata mpi on mpi.id = tpi.metadata_id "
 					+ "   inner join t$param p"
@@ -2357,6 +2396,8 @@ static void createNumericClustersV3(
 	}
 	
 	private static void makeTableNumericRealType() throws SQLException {
+		
+				 
 		execSQL(
 				" create table if not exists column_numeric_real_type( "
 				+ "	  real_type varchar(255), "
@@ -2367,16 +2408,32 @@ static void createNumericClustersV3(
 				+ " merge into column_numeric_real_type (real_type) key(real_type) values ('java.lang.Integer'); "
 				+ " merge into column_numeric_real_type (real_type) key(real_type) values ('java.lang.Long'); "
 				+ " merge into column_numeric_real_type (real_type) key(real_type) values ('java.math.BigDecimal'); "
-				+ " create view if not exists column_info_numeric_range_view as " 
-				+ " select c.id "
-				+ "      ,case when rt.real_type is not null then true else false end as is_numeric_type "
-				+ "      ,cast(case when rt.real_type is not null then c.min_val end as double) as min_val "
-				+ "      ,cast(case when rt.real_type is not null then c.max_val end as double) as max_val "
-				+ " from column_info c "
-				+ "  left outer join column_numeric_real_type rt on rt.real_type = c.real_type "
+				+ " alter table column_info add column if not exists has_numeric_content boolean; "
+				+ " alter table column_info add column if not exists min_fval double;"
+				+ " alter table column_info add column if not exists max_fval double;"
+				+ " alter table column_info add column if not exists min_sval varchar(4000);"
+				+ " alter table column_info add column if not exists max_sval varchar(4000);"
+				+ " alter table column_info add column if not exists integer_unique_count bigint;"
+				+ " alter table column_info add column if not exists moving_mean double;"
+				+ " alter table column_info add column if not exists moving_stddev double;"
 				);
-		execSQL(columnInfoNumericRangeView);
-  }
+		
+		execSQL("drop view if exists public.column_info_numeric_range_view; "
+				+ "create or replace view public.column_info_numeric_range_view as  "
+		        +" select "
+		        +"   c.id "
+		        + "  ,c.name "
+		        + "  ,c.table_info_id "
+		        +"   ,c.has_numeric_content "
+		        +"   ,c.min_fval as min_val "
+		        +"   ,c.max_fval as max_val "
+		        +" from public.column_info c "
+		        +" where c.min_fval is not null "
+		        +"   and c.max_fval is not null ");
+	}
+		        
+
+	
 	
 	private static ColumnStats getColStats(BigDecimal columnId) throws SQLException {
 		ColumnStats result  = null;
@@ -2462,7 +2519,7 @@ static void createNumericClustersV3(
 						+ "     inner join column_info c on c.id = r.id "
 						+ "     left outer join constraint_column_info cnc on cnc.child_column_id = r.id"
 						+ "     left outer join constraint_info cn on cn.id = cnc.constraint_info_id and cn.constraint_type='PK'"
-						+ " where cv.is_numeric_type=true "
+						+ " where cv.has_numeric_content = true "
 					)
 				) {
 			ps.setLong(1, workflow_id);
