@@ -1,7 +1,12 @@
 package com.rokittech;
 
+import java.io.BufferedInputStream;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.io.StringBufferInputStream;
+import java.io.StringReader;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.math.MathContext;
@@ -12,7 +17,10 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.Duration;
+import java.time.LocalTime;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
@@ -20,9 +28,11 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
 import java.util.Queue;
+import java.util.Scanner;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.zip.GZIPInputStream;
 
 import javax.swing.ButtonGroup;
 
@@ -532,13 +542,15 @@ where workflow_id = 66 and parent_column_info_id = 947
 				System.out.println("Done.");
 			} else if ("s".equals(command)) {
 				initH2(parsedArgs.getProperty("url"), parsedArgs.getProperty("uid"), parsedArgs.getProperty("pwd"));
-				List<String> params = new ArrayList<>();
+				/*List<String> params = new ArrayList<>();
 				params.add("IS_SEQ");
 				params.add("MOVING_MEAN");
 				if (parsedArgs.getProperty("bucket") != null) {
 					params.add("BUCKETS");
 				}
 				pairStatistics(longOf(parsedArgs.getProperty("wid")), params,parsedArgs);
+				*/
+				calculateDumpStats(new Long(92));
 				System.out.println("Done.");
 			} else if ("x".equals(command)) {
 				initH2(parsedArgs.getProperty("url"), parsedArgs.getProperty("uid"), parsedArgs.getProperty("pwd"));
@@ -2040,6 +2052,106 @@ static void createNumericClustersV3(
 		return true;
 	}*/
 	
+	private static void calculateDumpStats(Long tableId) throws SQLException, FileNotFoundException, IOException {
+		int maxIntegerValue = Integer.MAX_VALUE; 
+		LocalTime start = LocalTime.now();
+		
+		
+		H2Repository r = new H2Repository();
+		TableInfo table = r.loadTable(tableId);
+		table.columns = r.loadTableColumns(tableId);
+		char lineDelimiter[] = new char[]{10};
+		char columnDelimiter[] = new char[]{31};
+		int countColumn = table.columns.size();
+		try (Scanner lineScanner = new Scanner(new GZIPInputStream(
+					new BufferedInputStream(
+								new FileInputStream("C:/home/data.253.4/data/100020/86/ORCL.CRA.LIABILITIES.dat"
+										//"C:/home/data.151/"+table.pathToFile
+										),4096
+								)
+					)
+				)) {
+			//s.useDelimiter(new String(delimiter));
+			lineScanner.useDelimiter(String.valueOf(lineDelimiter));
+			while (lineScanner.hasNext()) {
+				String line = lineScanner.next(); 
+				int columnIndex = -1;
+				try (Scanner columnScanner = new Scanner(line)) {
+					columnScanner.useDelimiter(String.valueOf(columnDelimiter));
+					while (columnScanner.hasNext()) {
+						columnIndex ++;
+						String stringColumnData = columnScanner.next();
+						if (stringColumnData == null || stringColumnData.isEmpty()) continue;
+						ColumnInfo columnInfo = table.columns.get(columnIndex);
+						if (columnInfo.minSValue == null) {
+							columnInfo.minSValue = stringColumnData;
+							columnInfo.maxSValue = stringColumnData;
+						} else {
+							if (columnInfo.minSValue.compareTo(stringColumnData) > 0) {
+								columnInfo.minSValue = stringColumnData;
+							}
+							if (columnInfo.maxSValue.compareTo(stringColumnData) < 0) {
+								columnInfo.maxSValue = stringColumnData;
+							}
+						}
+						double numericColumnData;
+						try{
+							numericColumnData = Double.parseDouble(stringColumnData);
+						} catch (NumberFormatException e){
+							continue;
+						}
+						if (columnInfo.minFValue == null) {
+							columnInfo.minFValue = new Double(0);
+							columnInfo.maxFValue = new Double(0);
+							columnInfo.auxMinFValue = numericColumnData;
+							columnInfo.auxMaxFValue = numericColumnData;
+						} else {
+							columnInfo.auxMinFValue = Double.min(columnInfo.auxMinFValue , numericColumnData);
+							columnInfo.auxMaxFValue = Double.max(columnInfo.auxMaxFValue , numericColumnData);
+						}
+						boolean positive = numericColumnData>=0;
+						numericColumnData = Math.abs(numericColumnData);
+						
+						if (numericColumnData - Math.ceil(numericColumnData) == 0 ) {
+							long longImage = Math.round(numericColumnData);
+							Long key = new Long(maxIntegerValue >> (4 * 8 - 1));
+							int value = (int) longImage & 0xFFFFFFFF; 
+							SparseBitSet bs = null;
+							if (columnInfo.positiveBitsets == null) {
+								columnInfo.positiveBitsets = new TreeMap<>();
+								columnInfo.negativeBitsets = new TreeMap<>();
+							}
+							if (positive) 
+								bs = columnInfo.positiveBitsets.get(key);
+							else
+								bs = columnInfo.negativeBitsets.get(key);
+							
+							if (bs == null) {
+								bs = new SparseBitSet();
+								if (positive) 
+									columnInfo.positiveBitsets.put(key,bs);
+								else
+									columnInfo.negativeBitsets.put(key,bs);
+							}
+							bs.set(value);
+						}
+					}
+				};
+				
+			};
+			for(ColumnInfo column : table.columns) {
+				if (column.hasNumericContent != null && column.hasNumericContent) {
+					column.maxFValue = new Double(column.auxMaxFValue);
+					column.minFValue = new Double(column.auxMinFValue);
+				}
+			}
+		}
+		System.out.println(Duration.between(start, LocalTime.now()).getSeconds());
+		
+		
+		
+	}
+	
 	private static void calculateColStats(ColumnStats stats,List<String> params,Properties parsedArgs) throws SQLException, ClassNotFoundException, InstantiationException, IllegalAccessException {
 		Connection targetConnection = null;
 		String url = null, targetQuery = null;
@@ -3039,6 +3151,32 @@ static void createNumericClustersV3(
 		}
 
 	}
+	
+	public static class TableInfo{
+		Long id;
+		String schemaName;
+		String tableName;
+		String pathToFile;
+		List<ColumnInfo> columns;
+	}
+
+	public static class ColumnInfo{
+		Long id;
+		Long tableId;
+		String colunmName;
+		Long position;
+		Boolean hasNumericContent;
+		String minSValue;
+		String maxSValue;
+		Double minFValue;
+		Double maxFValue;
+		double auxMinFValue,auxMaxFValue;
+		Map<Long,SparseBitSet> positiveBitsets;
+		Map<Long,SparseBitSet> negativeBitsets;
+	}
+	
+	
+	
 	private static class ColumnStats {
 		BigDecimal columnId;
 		Boolean isSequence;
@@ -3051,4 +3189,58 @@ static void createNumericClustersV3(
 		BigDecimal median;
 		
 	}
+	
+	public static class H2Repository {
+		
+	  public TableInfo loadTable(Long tableId) throws SQLException {
+		TableInfo result = null;
+		if (tableId == null) throw new NullPointerException("tableId is empty");
+		
+		try(PreparedStatement ps = conn.prepareStatement(
+					"select schema_name, name, path_to_file "
+					+ " from table_info "
+					+ " where id = ?")) {
+			ps.setLong(1, tableId);
+			try (ResultSet rs = ps.executeQuery()) {
+				while (rs.next()) {
+					result = new TableInfo();
+					result.schemaName = rs.getString("schema_name");
+					result.tableName = rs.getString("name");
+					result.pathToFile = rs.getString("path_to_file");
+					result.id = tableId;
+				}
+			}
+		}
+	 	return result;
+	  }
+	  public List<ColumnInfo> loadTableColumns(Long tableId) throws SQLException {
+		  	List<ColumnInfo> result = null;
+			if (tableId == null) throw new NullPointerException("tableId is empty");
+			
+			try(PreparedStatement ps = conn.prepareStatement(
+						"select id, name, position "
+						+ " from column_info c  "
+						+ " where table_info_id = ? "
+						+ " order by c.position")) {
+				ps.setLong(1, tableId);
+				try (ResultSet rs = ps.executeQuery()) {
+					while (rs.next()) {
+						if (result == null) {
+							result = new ArrayList<ColumnInfo>();
+						}
+						ColumnInfo column = new ColumnInfo();
+						column.id = rs.getLong("id");
+						column.colunmName = rs.getString("name");
+						column.position = rs.getLong("position");
+						column.tableId = tableId;
+						result.add(column);
+					}
+				}
+			}
+		 	return result;
+		  }
+		    
+	  
+	}
+	
 }
