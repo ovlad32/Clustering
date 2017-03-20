@@ -5,12 +5,12 @@ import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.io.StringBufferInputStream;
 import java.io.StringReader;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.math.MathContext;
 import java.math.RoundingMode;
+import java.security.cert.CollectionCertStoreParameters;
 import java.sql.Connection;
 import java.sql.Driver;
 import java.sql.PreparedStatement;
@@ -21,6 +21,9 @@ import java.time.Duration;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.BitSet;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
@@ -30,11 +33,11 @@ import java.util.Properties;
 import java.util.Queue;
 import java.util.Scanner;
 import java.util.Set;
+import java.util.SortedSet;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.stream.Collectors;
 import java.util.zip.GZIPInputStream;
-
-import javax.swing.ButtonGroup;
 
 import com.zaxxer.sparsebits.SparseBitSet;
 
@@ -1904,7 +1907,7 @@ static void createNumericClustersV3(
 						+ " cross join t$param p "
 						+ "  inner join column_info cc on cc.id = t.column_id"
 						+ " left outer join t$column c "
-						+ " on c.column_id = t.column_id "
+						+ "     on c.column_id = t.column_id "
 						+ " where t.excluded = false "
 						+ "    and q.leading_column_db_id <> t.column_db_id"
 						+ "    and c.column_id is null"
@@ -1920,13 +1923,15 @@ static void createNumericClustersV3(
 			try (ResultSet rs = pst.executeQuery()){ 
 				while(rs.next()) {
 					BigDecimal currentRange = rs.getBigDecimal("range_val");
-					System.out.print(clusterNumber);
-					System.out.print(" ");
-					System.out.print(processingOrder);
-					System.out.print(" ");
-					System.out.print(rs.getString("name"));
-					System.out.print(" ");
-					System.out.println(rs.getBigDecimal("top_sweep"));
+					if (false) {
+						System.out.print(clusterNumber);
+						System.out.print(" ");
+						System.out.print(processingOrder);
+						System.out.print(" ");
+						System.out.print(rs.getString("name"));
+						System.out.print(" ");
+						System.out.println(rs.getBigDecimal("top_sweep"));
+					}
 					if ( currentRange == null) continue;
 					
 					if (clusterBoundaries.initialRange != null) {
@@ -1935,15 +1940,6 @@ static void createNumericClustersV3(
 								5,
 								RoundingMode.FLOOR
 								);
-						//System.out.print(clusterNumber);
-						//System.out.print(" ");
-						//System.out.print(rs.getLong("column_id"));
-						//System.out.print(" ");
-						//System.out.print(result);
-						//System.out.print(" ");
-						//System.out.println(result.compareTo(rangeLimit));
-						
-						
 						if (result.compareTo(rangeLimit) < 0){ 
 							continue; 
 						}
@@ -2094,18 +2090,18 @@ static void createNumericClustersV3(
 	private static void calculateDumpStats(Long tableId) throws SQLException, FileNotFoundException, IOException {
 		int maxIntegerValue = Integer.MAX_VALUE; 
 		LocalTime start = LocalTime.now();
-		
-		
-		H2Repository r = new H2Repository();
-		TableInfo table = r.loadTable(tableId);
-		table.columns = r.loadTableColumns(tableId);
+
+		H2Repository repo = new H2Repository();
+		TableInfo table = repo.loadTable(tableId);
+		table.columns = repo.loadTableColumns(tableId);
 		char lineDelimiter[] = new char[]{10};
 		char columnDelimiter[] = new char[]{31};
 		int countColumn = table.columns.size();
 		try (Scanner lineScanner = new Scanner(new GZIPInputStream(
 					new BufferedInputStream(
-								new FileInputStream("C:/home/data.253.4/data/100020/86/ORCL.CRA.LIABILITIES.dat"
-										//"C:/home/data.151/"+table.pathToFile
+								new FileInputStream(
+										//"C:/home/data.253.4/data/100020/86/ORCL.CRA.LIABILITIES.dat"
+										"C:/home/data.151/"+table.pathToFile
 										),4096
 								)
 					)
@@ -2136,6 +2132,7 @@ static void createNumericClustersV3(
 						double numericColumnData;
 						try{
 							numericColumnData = Double.parseDouble(stringColumnData);
+							columnInfo.hasNumericContent=Boolean.TRUE;
 						} catch (NumberFormatException e){
 							continue;
 						}
@@ -2178,18 +2175,119 @@ static void createNumericClustersV3(
 				};
 				
 			};
-			for(ColumnInfo column : table.columns) {
-				if (column.hasNumericContent != null && column.hasNumericContent) {
-					column.maxFValue = new Double(column.auxMaxFValue);
-					column.minFValue = new Double(column.auxMinFValue);
+		}
+			
+		class StatPiece{
+			boolean negative;
+			Long key;
+			double cardinality,	movingMean, standardDeviation;
+			public void process(SparseBitSet bs) {
+				int prevValue = 0, value = 0;
+				long cumulativeDeviaton = 0;
+				this.cardinality  = (double)bs.cardinality();
+				boolean gotPrevValue = false;
+				gotPrevValue = bs.get(0); // It's not possible to check 0 value in the cycle below
+				for(;;) {
+					value = bs.nextSetBit(value + 1);
+					if (value == -1) break;
+					if (!gotPrevValue) {
+						prevValue = value;
+						gotPrevValue = true;
+					} else {
+						cumulativeDeviaton += (value - prevValue);
+						prevValue = value;
+					}
 				}
+				this.movingMean = cumulativeDeviaton/(this.cardinality-1);
+				prevValue= 0;value = 0;
+				double totalDeviation = 0;  
+				gotPrevValue = bs.get(0);
+				for(;;) {
+					value = bs.nextSetBit(value + 1);
+					if (value == -1) break;
+					if (!gotPrevValue) {
+						prevValue = value;
+						gotPrevValue = true;
+					} else {
+						totalDeviation = totalDeviation + Math.pow(this.movingMean - (double)(value - prevValue),2);
+						prevValue = value;
+					}
+				}
+				this.standardDeviation = Math.sqrt(totalDeviation/(this.cardinality-1));
+			}
+						
+		}
+		List<StatPiece> stats = new ArrayList<>();
+	
+		
+		for(ColumnInfo column : table.columns) {
+			if (column.hasNumericContent != null && column.hasNumericContent) {
+				column.maxFValue = new Double(column.auxMaxFValue);
+				column.minFValue = new Double(column.auxMinFValue);
+				
+				
+				
+				if (column.positiveBitsets != null && column.positiveBitsets.size()>0) {
+					Set<Long> keySet = column.positiveBitsets.keySet();
+					List <Long>keys = Collections.list(Collections.enumeration(keySet));
+					Collections.sort(keys);
+					for (Long key:keys) {
+						SparseBitSet bs = column.positiveBitsets.get(key);
+						if (bs.cardinality()>1) {
+							StatPiece ps = new StatPiece();
+							ps.key = key;
+							ps.negative = false;
+							ps.process(bs);
+							stats.add(ps);
+						}
+					}
+				}
+				if (column.negativeBitsets != null && column.negativeBitsets.size()>0) {
+					Set<Long> keySet = column.negativeBitsets.keySet();
+					List <Long>keys = Collections.list(Collections.enumeration(keySet));
+					Collections.sort(keys);
+					for (Long key:keys) {
+						SparseBitSet bs = column.negativeBitsets.get(key);
+						if (bs.cardinality()>1) {
+							StatPiece ps = new StatPiece();
+							ps.key = key;
+							ps.negative = true;
+							ps.process(bs);
+							stats.add(ps);
+						}
+					}
+				}
+				column.negativeBitsets = null;
+				column.positiveBitsets = null;
+				
+				if (stats.size()>0) {
+					
+					StatPiece total;
+					if (stats.size() == 1)
+						total = stats.get(0);
+					else {
+						total = new StatPiece();
+						for (StatPiece ps: stats) {
+							total.movingMean += ps.movingMean;
+							total.standardDeviation += ps.standardDeviation*ps.cardinality;
+							total.cardinality +=ps.cardinality; 
+						}
+						total.movingMean = total.movingMean/(double)stats.size();
+						total.standardDeviation = total.standardDeviation/total.cardinality;
+					}
+					column.integerUniqueCount = new Long(Math.round(total.cardinality));
+					column.movingMean = new Double(total.movingMean);
+					column.standardDeviation = new Double(total.standardDeviation);
+					repo.saveColumnStats(column);
+				}
+				
 			}
 		}
 		System.out.println(Duration.between(start, LocalTime.now()).getSeconds());
-		
-		
-		
 	}
+	
+	
+	
 	
 	private static void calculateColStats(ColumnStats stats,List<String> params,Properties parsedArgs) throws SQLException, ClassNotFoundException, InstantiationException, IllegalAccessException {
 		Connection targetConnection = null;
@@ -3227,6 +3325,9 @@ static void createNumericClustersV3(
 		String maxSValue;
 		Double minFValue;
 		Double maxFValue;
+		Long   integerUniqueCount;
+		Double movingMean;
+		Double standardDeviation;
 		double auxMinFValue,auxMaxFValue;
 		Map<Long,SparseBitSet> positiveBitsets;
 		Map<Long,SparseBitSet> negativeBitsets;
@@ -3244,7 +3345,6 @@ static void createNumericClustersV3(
 		BigDecimal movingMean;
 		BigDecimal stdDev;
 		BigDecimal median;
-		
 	}
 	
 	public static class H2Repository {
@@ -3296,6 +3396,29 @@ static void createNumericClustersV3(
 			}
 		 	return result;
 		  }
+	  	public void saveColumnStats(ColumnInfo column) throws SQLException {
+	  		try (PreparedStatement ps = conn.prepareStatement(
+	  				"merge into column_info("
+	  				+ " id, has_numeric_value, "
+	  				+ " min_fval,max_fval,min_sval,max_sval,"
+	  				+ " integer_unique_count,"
+	  				+ " moving_mean,moving_stddev) key(id) values("
+	  				+ " ?,?,"
+	  				+ " ?,?,?,?,"
+	  				+ " ?,"
+	  				+ " ?,?)")) {
+	  			ps.setLong(1, column.id);
+	  			ps.setBoolean(2, column.hasNumericContent);
+	  			ps.setDouble(3, column.minFValue);
+	  			ps.setDouble(4, column.maxFValue);
+	  			ps.setString(5, column.minSValue);
+	  			ps.setString(6, column.maxSValue);
+	  			ps.setDouble(7, column.movingMean);
+	  			ps.setDouble(8, column.standardDeviation);
+	  			ps.executeUpdate();
+	  		}
+		  	conn.commit();
+	  	}
 		    
 	  
 	}
