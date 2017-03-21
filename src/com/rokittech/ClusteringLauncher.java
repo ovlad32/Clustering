@@ -245,27 +245,25 @@ where workflow_id = 66 and parent_column_info_id = 947
 			+ "     ,p.lucene_level\n"  
 			+ "     ,pc.real_type         as parent_real_type \n"
 			+ "     ,pc.hash_unique_count as parent_huq \n"
-			+ "     ,case when pcs.column_id is not null then pc.min_val end as parent_min \n"  
-			+ "     ,case when pcs.column_id is not null then pc.max_val end as parent_max \n"  
-		    + "     ,case when pcs.is_sequence then 'Y' end as parent_is_sequence "
-			+ "     ,pcs.std_dev          as parent_std_dev \n" 
-			+ "     ,pcs.moving_mean      as parent_moving_mean \n"  
-			+ "     ,pcs.median           as parent_median \n" 
+			+ "     ,pc.min_fval as parent_min \n"  
+			+ "     ,pc.max_fval as parent_max \n"  
+		    + "     ,null as parent_is_sequence "
+			+ "     ,pc.std_dev          as parent_std_dev \n" 
+			+ "     ,pc.moving_mean      as parent_moving_mean \n"  
+			+ "     ,cast(null as double)  as parent_median \n" 
 		    + "     ,cc.real_type         as child_real_type \n"  
 			+ "     ,cc.hash_unique_count as child_huq \n"
-			+ "     ,case when ccs.column_id is not null then cc.min_val end as child_min \n"  
-			+ "     ,case when ccs.column_id is not null then cc.max_val end as child_max \n"  
-		    + "     ,case when ccs.is_sequence then 'Y' end as child_is_sequence "
-			+ "     ,ccs.moving_mean      as child_moving_mean \n" 
-			+ "     ,ccs.std_dev          as child_std_dev \n" 
-			+ "     ,ccs.median           as child_median \n"  
+			+ "     ,cc.min_fval as child_min \n"  
+			+ "     ,cc.max_fval as child_max \n"  
+		    + "     ,null as child_is_sequence "
+			+ "     ,cc.moving_mean      as child_moving_mean \n" 
+			+ "     ,cc.std_dev          as child_std_dev \n" 
+			+ "     ,cast(null as double) as child_median \n"  
 			+ "   from link_clustered_column_param p\n"
 			+ "     inner join link_clustered_column c on p.workflow_id = c.workflow_id and p.cluster_label = c.cluster_label\n"
 			+ "     inner join link l on c.column_info_id in (l.parent_column_info_id,l.child_column_info_id)\n"
 			+ "     inner join column_info pc on pc.id = l.parent_column_info_id "
 			+ "     inner join column_info cc on cc.id = l.child_column_info_id "
-			+ "     left outer join column_numeric_stats pcs on pcs.column_id = l.parent_column_info_id "
-			+ "     left outer join column_numeric_stats ccs on ccs.column_id = l.child_column_info_id "
 			+ "     left outer join link lr\n" + "       on lr.parent_column_info_id = l.child_column_info_id\n"
 			+ "      and lr.child_column_info_id = l.parent_column_info_id\n"
 			+ "      and lr.workflow_id = l.workflow_id\n" + "where p.workflow_id = ?\n" + " and p.cluster_label = ?\n"
@@ -336,40 +334,38 @@ where workflow_id = 66 and parent_column_info_id = 947
      "   ,case when pc.HASH_UNIQUE_COUNT = cc.HASH_UNIQUE_COUNT then 'Y' end as unique_same" +  
 	 "   ,pc.real_type         as parent_real_type \n" +
 	 "   ,pc.hash_unique_count as parent_huq \n" + 
-	 "   ,case when pcs.column_id is not null then pc.data_scale end as parent_data_scale \n" + 
-	 "   ,case when pcs.column_id is not null then pc.min_val end as parent_min \n" + 
-	 "   ,case when pcs.column_id is not null then pc.max_val end as parent_max \n" + 
-     "   ,case when pcs.is_sequence then 'Y' end as parent_is_sequence "+
-	 "   ,pcs.std_dev          as parent_std_dev \n" + 
-	 "   ,pcs.moving_mean      as parent_moving_mean \n" + 
-	 "   ,pcs.median           as parent_median \n" + 
-	 "   ,pcs.position_in_pk   as parent_position_in_constraint \n"+
-	 "   ,pcs.total_in_pk      as parent_total_columns_in_pk\n"+
+	 "   ,pc.data_scale as parent_data_scale \n" + 
+	 "   ,pc.min_fval   as parent_min \n" + 
+	 "   ,pc.max_fval   as parent_max \n" + 
+     "   ,null as parent_is_sequence "+
+	 "   ,pc.std_dev          as parent_std_dev \n" + 
+	 "   ,pc.moving_mean      as parent_moving_mean \n" + 
+	 "   ,cast(null as double) as parent_median \n" + 
+	 "   ,pc.position_in_pk   as parent_position_in_constraint \n"+
+	 "   ,pc.total_in_pk      as parent_total_columns_in_pk\n"+
      "   ,cc.real_type         as child_real_type \n" + 
 	 "   ,cc.hash_unique_count as child_huq \n"+ 
-	 "   ,case when ccs.column_id is not null then cc.data_scale end as child_data_scale \n" + 
-	 "   ,case when ccs.column_id is not null then cc.min_val end as child_min \n" + 
-	 "   ,case when ccs.column_id is not null then cc.max_val end as child_max \n" + 
-     "   ,case when ccs.is_sequence then 'Y' end as child_is_sequence "+
-	 "   ,ccs.moving_mean      as child_moving_mean \n" + 
-	 "   ,ccs.std_dev          as child_std_dev \n" + 
-	 "   ,ccs.median           as child_median \n" + 
-	 "   ,ccs.position_in_pk   as child_position_in_constraint \n"+
-	 "   ,ccs.total_in_pk      as child_total_columns_in_pk\n"+
-	 "   ,case when pcs.is_sequence = true "+
-	 "          and ccs.is_sequence = true "+
-	 "          and greatest(pcs.num_max_val, ccs.num_max_val) "+
-	 "              - least(pcs.num_min_val, ccs.num_min_val) <> 0 then "+
-	 "          1.0*(abs(pcs.num_min_val - ccs.num_min_val) + abs(pcs.num_max_val - ccs.num_max_val)) / "+
-	 "            (greatest(pcs.num_max_val, ccs.num_max_val) - "+
-	 "              - least(pcs.num_min_val, ccs.num_min_val) ) end as range_similarity" +
+	 "   ,cc.data_scale as child_data_scale \n" + 
+	 "   ,cc.min_fval as child_min \n" + 
+	 "   ,cc.max_fval as child_max \n" + 
+     "   ,null  as child_is_sequence "+
+	 "   ,cc.moving_mean      as child_moving_mean \n" + 
+	 "   ,cc.std_dev          as child_std_dev \n" + 
+	 "   ,cc.median           as child_median \n" + 
+	 "   ,cc.position_in_pk   as child_position_in_constraint \n"+
+	 "   ,cc.total_in_pk      as child_total_columns_in_pk\n"+
+	 "   ,case greatest(pc.max_fval, cc.max_fval) "+
+	 "              - least(pc.min_fval, cc.min_fval) <> 0 then "+
+	 "          1.0*(abs(pc.min_fval - cc.min_fval) + abs(pcs.max_fval - ccs.max_fval)) / "+
+	 "            (greatest(pc.max_fval, cc.max_fval) - "+
+	 "              - least(pc.min_fval, cc.min_fval) ) end as range_similarity" +
 	 "   ,(select top 1 'buckets'||b1.column_id from column_numeric_bucket b1 where b1.column_id = l.parent_column_info_id) as parent_buckets \n"+
 	 "	 ,(select top 1 'buckets'||b1.column_id from column_numeric_bucket b1 where b1.column_id = l.child_column_info_id) as child_buckets \n"+
 	 "   ,l.parent_column_info_id \n" +
 	 "   ,cc.table_info_id as child_table_info_id \n"+
 	 "   ,l.child_column_info_id \n" + 
 	 "   ,pc.table_info_id as parent_table_info_id \n"+
-	 "   ,case when pcs.position_in_pk is not null and (\n"+
+	 "   ,case when pc.position_in_pk is not null and (\n"+
      "	        select top 1 'Y' from link l1 \n"+
      "	        inner join column_info cc1 on cc1.id = l1.child_column_info_id \n"+
      "	        inner join column_info pc1 on pc1.id = l1.parent_column_info_id \n"+
@@ -377,7 +373,7 @@ where workflow_id = 66 and parent_column_info_id = 947
      "	         and cc1.table_info_id = cc.table_info_id \n"+
      "	         and pc1.table_info_id = pc.table_info_id \n"+
      "	         and pc1.id <> l.parent_column_info_id) is null then 'Y' end as parent_pk_only_pair \n"+
-	 "   ,case when ccs.position_in_pk is not null and (\n"+
+	 "   ,case when cc.position_in_pk is not null and (\n"+
      "	        select top 1 'Y' from link l1 \n"+
      "	        inner join column_info cc1 on cc1.id = l1.child_column_info_id \n"+
      "	        inner join column_info pc1 on pc1.id = l1.parent_column_info_id \n"+
@@ -390,8 +386,6 @@ where workflow_id = 66 and parent_column_info_id = 947
 	  " from link l" +
 	  " inner join column_info pc on pc.id = l.parent_column_info_id " +
 	  " inner join column_info cc on cc.id = l.child_column_info_id " +
-	  " left outer join column_numeric_stats pcs on pcs.column_id = l.parent_column_info_id " +
-	  " left outer join column_numeric_stats ccs on ccs.column_id = l.child_column_info_id " +
 	  " left outer join link_column_group bs" +
 	  "   on bs.scope = 'SAME_BS'" +
 	  "  and bs.workflow_id = l.workflow_id" +
@@ -511,8 +505,6 @@ where workflow_id = 66 and parent_column_info_id = 947
 				
 				deleteClusters(parsedArgs.getProperty("label"), longOf(parsedArgs.getProperty("wid")));
 
-				covertVarcharMinMaxToNumeric(longOf(parsedArgs.getProperty("wid")));
-				
 				
 				createNumericClustersV3(parsedArgs.getProperty("label"), longOf(parsedArgs.getProperty("wid")),
 						floatOf(parsedArgs.getProperty("bl")), 
@@ -527,8 +519,6 @@ where workflow_id = 66 and parent_column_info_id = 947
 				System.out.println("Done.");
 			} else if ("a".equals(command)) {
 				initH2(parsedArgs.getProperty("url"), parsedArgs.getProperty("uid"), parsedArgs.getProperty("pwd"));
-				
-				covertVarcharMinMaxToNumeric(longOf(parsedArgs.getProperty("wid")));
 				
 				reportAllCoumnPairs(longOf(parsedArgs.getProperty("wid")),
 						parsedArgs.getProperty("outfile"));
@@ -847,56 +837,12 @@ where workflow_id = 66 and parent_column_info_id = 947
 		conn.commit();
 	}
 	
-	static void covertVarcharMinMaxToNumeric(Long workflowId) throws SQLException {
 
-		if (workflowId == null) {
-			throw new RuntimeException("Error: Workflow ID has not been specified!");
-		}
-
-		
-		try (PreparedStatement ps = conn.prepareStatement(
-			"select distinct c.id, c.min_val, c.max_val from link l "
-			+ " inner join column_info cl on cl.id in (l.parent_column_info_id,l.child_column_info_id) "
-			+ " inner join table_info tl on tl.id = cl.table_info_id "
-			+ " inner join table_info t on t.metadata_id = tl.metadata_id "
-			+ " inner join column_info c on c.table_info_id = t.id "
-			+ " inner join column_numeric_real_type rt on rt.real_type = c.real_type "
-			+ " where (c.min_val is not null and c.max_val is not null) "
-			+ "   and (c.min_fval is null and c.max_fval is null) " 
-			+ "   and l.workflow_id = ?" )){
-			ps.setLong(1, workflowId);
-			try (ResultSet rs = ps.executeQuery()) {
-				while (rs.next()) {
-					BigDecimal id = rs.getBigDecimal(1);
-					String minValue = rs.getString(2), 
-							maxValue = rs.getString(3);
-					Double minFValue = null ,maxFValue= null ;
-					try {
-						minFValue = new Double(minValue);
-						maxFValue = new Double(maxValue);
-					
-					} catch(NumberFormatException e) {
-						continue;
-					}
-					if (minFValue != null && maxFValue != null) {
-						try (PreparedStatement ups = conn.prepareStatement(
-								"update column_info set "
-								+ "	has_numeric_content = true "
-								+ " ,min_fval = ?"
-								+ " ,max_fval = ?"
-								+ " where id = ?")) {
-							ups.setDouble(1, minFValue);
-							ups.setDouble(2, maxFValue);
-							ups.setBigDecimal(3,id);
-							ups.executeUpdate();	
-						}
-					}
-				}
-			}
-		};
-		conn.commit();
+	static String getWorkingTableModifierString() {
+		return workingTableTemporary ? " memory local temporary " : "";
 	}
 	
+	@Deprecated
 	static void createNumericClusters(String clusterLabel, Long workflowId, Float bitsetLevel, Float luceneLevel) throws SQLException {
 		
 		
@@ -1165,7 +1111,7 @@ where workflow_id = 66 and parent_column_info_id = 947
 			
 		
 	}
-	
+	@Deprecated
 	static boolean saveClusteredColumnId(Long columnId, Long clusterNumber,Long processingOrder,
 			BigDecimal minValue,BigDecimal maxValue) {
 		boolean result;
@@ -1205,11 +1151,9 @@ where workflow_id = 66 and parent_column_info_id = 947
 		return result;
 	}	
 	*/
-	static String getWorkingTableModifierString() {
-		return workingTableTemporary ? " memory local temporary " : "";
-	}
 	
-static void createNumericClustersV2(String clusterLabel, Long workflowId, Float bitsetLevel, Float luceneLevel) throws SQLException {
+	@Deprecated	
+	static void createNumericClustersV2(String clusterLabel, Long workflowId, Float bitsetLevel, Float luceneLevel) throws SQLException {
 		
 		long clusterNumber = 0;
 		long processingOrder = 0;
@@ -1989,7 +1933,7 @@ static void createNumericClustersV3(
 						+ "	         	from t$column ti "
 						+ "             where ti.cluster_number>0 "
 						+ "		        group by ti.cluster_number "
-						+ "		        having count(ti.column_id) >=3 " //a cluster must have 3 or more columns
+						+ "		        having count(ti.column_id) >=2 " //a cluster must have 2..3 or more columns
 						+ "             order by 1 "
 						+ "           ) "
 						+ "        ) i "
@@ -2118,6 +2062,9 @@ static void createNumericClustersV3(
 						String stringColumnData = columnScanner.next();
 						if (stringColumnData == null || stringColumnData.isEmpty()) continue;
 						ColumnInfo columnInfo = table.columns.get(columnIndex);
+						if (columnInfo.hasNumericContent == null) columnInfo.hasNumericContent = Boolean.FALSE;
+						
+						
 						if (columnInfo.minSValue == null) {
 							columnInfo.minSValue = stringColumnData;
 							columnInfo.maxSValue = stringColumnData;
@@ -2170,6 +2117,8 @@ static void createNumericClustersV3(
 									columnInfo.negativeBitsets.put(key,bs);
 							}
 							bs.set(value);
+						} else {
+							columnInfo.hasFloatContent = Boolean.TRUE;
 						}
 					}
 				};
@@ -2225,7 +2174,7 @@ static void createNumericClustersV3(
 				column.maxFValue = new Double(column.auxMaxFValue);
 				column.minFValue = new Double(column.auxMinFValue);
 				
-				
+				if (column.hasFloatContent == null) column.hasFloatContent = Boolean.FALSE;
 				
 				if (column.positiveBitsets != null && column.positiveBitsets.size()>0) {
 					Set<Long> keySet = column.positiveBitsets.keySet();
@@ -2278,15 +2227,15 @@ static void createNumericClustersV3(
 					column.integerUniqueCount = new Long(Math.round(total.cardinality));
 					column.movingMean = new Double(total.movingMean);
 					column.standardDeviation = new Double(total.standardDeviation);
-					repo.saveColumnStats(column);
 				}
-				
 			}
+			repo.saveColumnStats(column);
+			
 		}
 		System.out.println(Duration.between(start, LocalTime.now()).getSeconds());
 	}
 	
-	
+	/*
 	
 	
 	private static void calculateColStats(ColumnStats stats,List<String> params,Properties parsedArgs) throws SQLException, ClassNotFoundException, InstantiationException, IllegalAccessException {
@@ -2366,10 +2315,6 @@ static void createNumericClustersV3(
 			shift = minValue.longValue()%bucketDivisor;  
 		}
 		try(PreparedStatement ps = targetConnection.prepareStatement(targetQuery); 
-				/*DB bucketDB = DBMaker.fileDB(String.format("./c%d.mapdb",stats.columnId.longValue())).
-						fileMmapEnable().make();
-				BTreeMap<BigDecimal,BigInteger> map = bucketDB.treeMap("c",Serializer.BIG_DECIMAL,Serializer.BIG_INTEGER).create();
-				*/
 				ResultSet rs = ps.executeQuery()){
 			    ps.setFetchSize(50000);
 			while (rs.next()) {
@@ -2470,20 +2415,8 @@ static void createNumericClustersV3(
 
 		}
 	}
-	
+	*/
 	private static void makeTableColStats() throws SQLException {
-		execSQL("create table if not exists column_numeric_stats( "
-				+ "column_id bigint"
-				+ ", moving_mean real"
-				+ ", std_dev real"
-				+ ", median bigint"
-				+ ", is_sequence boolean"
-				+ ", num_min_val bigint"
-				+ ", num_max_val bigint"
-				+ ", position_in_pk bigint"
-				+ ", total_in_pk bigint"
-				+ ", constraint column_numeric_stats_pk primary key (column_id))");
-		
 		execSQL("create table if not exists column_numeric_bucket( "
 				+ " column_id bigint "
 				+ "  ,bucket_width bigint "
@@ -2507,6 +2440,7 @@ static void createNumericClustersV3(
 				+ " merge into column_numeric_real_type (real_type) key(real_type) values ('java.lang.Long'); "
 				+ " merge into column_numeric_real_type (real_type) key(real_type) values ('java.math.BigDecimal'); "
 				+ " alter table column_info add column if not exists has_numeric_content boolean; "
+				+ " alter table column_info add column if not exists has_float_content boolean; "
 				+ " alter table column_info add column if not exists min_fval double;"
 				+ " alter table column_info add column if not exists max_fval double;"
 				+ " alter table column_info add column if not exists min_sval varchar(4000);"
@@ -2514,6 +2448,8 @@ static void createNumericClustersV3(
 				+ " alter table column_info add column if not exists integer_unique_count bigint;"
 				+ " alter table column_info add column if not exists moving_mean double;"
 				+ " alter table column_info add column if not exists moving_stddev double;"
+				+ " alter table column_info add column if not exists position_in_pk int;"
+				+ " alter table column_info add column if not exists total_in_pk int;"
 				);
 		
 		execSQL("drop view if exists public.column_info_numeric_range_view; "
@@ -2523,17 +2459,19 @@ static void createNumericClustersV3(
 		        + "  ,c.name "
 		        + "  ,c.table_info_id "
 		        +"   ,c.has_numeric_content "
+		        + "  ,c.has_float_content "
 		        +"   ,c.min_fval as min_val "
 		        +"   ,c.max_fval as max_val "
 		        +" from public.column_info c "
 		        +" where c.min_fval is not null "
-		        +"   and c.max_fval is not null ");
+		        +"   and c.max_fval is not null "
+		        + "  and c.has_numeric_content = true ");
 	}
 		        
 
 	
 	
-	private static ColumnStats getColStats(BigDecimal columnId) throws SQLException {
+	/*private static ColumnStats getColStats(BigDecimal columnId) throws SQLException {
 		ColumnStats result  = null;
 		try(PreparedStatement ps = conn.prepareStatement(
 				"select moving_mean"
@@ -2601,23 +2539,22 @@ static void createNumericClustersV3(
 		try(
 				PreparedStatement ps = conn.prepareStatement(
 						" select r.id"
-						+ "    ,c.max_val"
-						+ "    ,c.min_val"
-						+ "    ,c.hash_unique_count"
+						+ "    ,c.max_fval"
+						+ "    ,c.min_fval"
+						+ "    ,c.integer_unique_count"
 						+ "    ,nvl(c.data_scale,0) as data_scale "
 						+ "    ,cnc.position_in_constraint "
 						+ "    ,case when cn.id is not null then ("
 						+ "           select count(*) from constraint_column_info c1 "
 						+ "           where c1.constraint_info_id = cn.id) end as total_in_pk"
-						+ "   from ("
-						+ " select parent_column_info_id as id from link l  where l.WORKFLOW_ID = ? "
-						+ "   union "
+						+ "  from ("
+						+ "   select parent_column_info_id as id from link l  where l.WORKFLOW_ID = ? "
+						+ "    union "
 						+ "   select child_column_info_id as id from link l  where l.WORKFLOW_ID = ? "
-						+ " ) r inner join COLUMN_INFO_NUMERIC_RANGE_VIEW cv on cv.id = r.id "
-						+ "     inner join column_info c on c.id = r.id "
+						+ " ) r inner join column_info c on c.id = r.id "
 						+ "     left outer join constraint_column_info cnc on cnc.child_column_id = r.id"
 						+ "     left outer join constraint_info cn on cn.id = cnc.constraint_info_id and cn.constraint_type='PK'"
-						+ " where cv.has_numeric_content = true "
+						+ " where c.has_numeric_content = true "
 					)
 				) {
 			ps.setLong(1, workflow_id);
@@ -2661,7 +2598,7 @@ static void createNumericClustersV3(
 		if (!found) {
 			throw new RuntimeException("No pairs found to process");
 		}
-	}
+	}*/
 	
 	private static void reportClusters(String clusterLabel, Long workflowId, String outFile)
 			throws SQLException, IOException {
@@ -2785,14 +2722,14 @@ static void createNumericClustersV3(
 					
 					out.elementf("TD","class='centered'", "%s", rs.getString("parent_is_sequence")); 
 					out.elementf("TD","class='integer'", "%d", rs.getObject("PARENT_HUQ"));
-					out.elementf("TD","class='confidence'", "%s", rs.getString("PARENT_MIN"));
-					out.elementf("TD","class='confidence'", "%s", rs.getString("PARENT_MAX"));
+					out.elementf("TD","class='confidence'", "%f", rs.getBigDecimal("PARENT_MIN"));
+					out.elementf("TD","class='confidence'", "%f", rs.getBigDecimal("PARENT_MAX"));
 					out.elementf("TD","%s", rs.getString("PARENT_REAL_TYPE"));
 
 					out.elementf("TD","class='centered'", "%s", rs.getString("child_is_sequence")); 
 					out.elementf("TD","class='integer'", "%d", rs.getObject("CHILD_HUQ"));
-					out.elementf("TD","class='confidence'", "%s", rs.getString("CHILD_MIN"));
-					out.elementf("TD","class='confidence'", "%s", rs.getString("CHILD_MAX"));
+					out.elementf("TD","class='confidence'", "%f", rs.getBigDecimal("CHILD_MIN"));
+					out.elementf("TD","class='confidence'", "%f", rs.getBigDecimal("CHILD_MAX"));
 					out.elementf("TD","%s", rs.getString("CHILD_REAL_TYPE"));
 					
 					
@@ -3079,8 +3016,8 @@ static void createNumericClustersV3(
 
 						out.element("TD", "class='centered'", rs.getString("parent_is_sequence"));
 						out.elementf("TD","class='integer'", "%d", rs.getObject("parent_huq"));
-						out.elementf("TD","class='integer'", "%s", rs.getString("parent_min"));
-						out.elementf("TD","class='integer'", "%s", rs.getString("parent_max"));
+						out.elementf("TD","class='integer'", "%f", rs.getBigDecimal("parent_min"));
+						out.elementf("TD","class='integer'", "%f", rs.getBigDecimal("parent_max"));
 						out.elementf("TD", "class='integer'", "%f",rs.getBigDecimal("parent_median"));
 						out.elementf("TD", "class='integer'", "%f",rs.getBigDecimal("parent_moving_mean"));
 						out.elementf("TD", "class='confidence'", "%f",rs.getBigDecimal("parent_std_dev"));
@@ -3089,8 +3026,8 @@ static void createNumericClustersV3(
 
 						out.element("TD", "class='centered'", rs.getString("child_is_sequence"));
 						out.elementf("TD","class='integer'", "%d", rs.getObject("child_huq"));
-						out.elementf("TD","class='integer'", "%s", rs.getString("child_min"));
-						out.elementf("TD","class='integer'", "%s", rs.getString("child_max"));
+						out.elementf("TD","class='integer'", "%f", rs.getBigDecimal("child_min"));
+						out.elementf("TD","class='integer'", "%f", rs.getBigDecimal("child_max"));
 						out.elementf("TD", "class='integer'", "%f",rs.getBigDecimal("child_median"));
 						out.elementf("TD", "class='confidence'", "%f",rs.getBigDecimal("child_moving_mean"));
 						out.elementf("TD", "class='confidence'", "%f",rs.getBigDecimal("child_std_dev"));
@@ -3321,6 +3258,7 @@ static void createNumericClustersV3(
 		String colunmName;
 		Long position;
 		Boolean hasNumericContent;
+		Boolean hasFloatContent;
 		String minSValue;
 		String maxSValue;
 		Double minFValue;
@@ -3328,13 +3266,15 @@ static void createNumericClustersV3(
 		Long   integerUniqueCount;
 		Double movingMean;
 		Double standardDeviation;
+		Long   positionInPk;
+		Long   totalInPk;
 		double auxMinFValue,auxMaxFValue;
 		Map<Long,SparseBitSet> positiveBitsets;
 		Map<Long,SparseBitSet> negativeBitsets;
 	}
 	
 	
-	
+	/*
 	private static class ColumnStats {
 		BigDecimal columnId;
 		Boolean isSequence;
@@ -3345,7 +3285,7 @@ static void createNumericClustersV3(
 		BigDecimal movingMean;
 		BigDecimal stdDev;
 		BigDecimal median;
-	}
+	}*/
 	
 	public static class H2Repository {
 		
@@ -3399,28 +3339,43 @@ static void createNumericClustersV3(
 	  	public void saveColumnStats(ColumnInfo column) throws SQLException {
 	  		try (PreparedStatement ps = conn.prepareStatement(
 	  				"merge into column_info("
-	  				+ " id, has_numeric_value, "
+	  				+ " id, has_numeric_content, has_float_content,"
 	  				+ " min_fval,max_fval,min_sval,max_sval,"
-	  				+ " integer_unique_count,"
-	  				+ " moving_mean,moving_stddev) key(id) values("
-	  				+ " ?,?,"
+	  				+ " integer_unique_count,moving_mean,moving_stddev,"
+	  				+ " position_in_pk, total_in_pk) key(id) values("
+	  				+ " ?,?,?,"
 	  				+ " ?,?,?,?,"
-	  				+ " ?,"
-	  				+ " ?,?)")) {
-	  			ps.setLong(1, column.id);
-	  			ps.setBoolean(2, column.hasNumericContent);
-	  			ps.setDouble(3, column.minFValue);
-	  			ps.setDouble(4, column.maxFValue);
-	  			ps.setString(5, column.minSValue);
-	  			ps.setString(6, column.maxSValue);
-	  			ps.setDouble(7, column.movingMean);
-	  			ps.setDouble(8, column.standardDeviation);
+	  				+ " ?,?,?,"
+	  				+ " (select cnc.position_in_constraint "
+	  				+ "    from constraint_column_info cnc"
+	  				+ "     inner join constraint_info cn "
+	  				+ "       on cn.id = cnc.constraint_info_id "
+	  				+ "      and cn.constraint_type='PK'"
+	  				+ "    where cnc.child_column_id = ?),"
+	  				+ " (select (select count(*) from constraint_column_info cna where cna.constraint_info_id = cn.id) "
+	  				+ "    from constraint_column_info cnc"
+	  				+ "     inner join constraint_info cn "
+	  				+ "       on cn.id = cnc.constraint_info_id "
+	  				+ "      and cn.constraint_type='PK'"
+	  				+ "    where cnc.child_column_id = ?) "
+	  				+ " )")) {
+	  			int col = 0;
+	  			ps.setLong(++col, column.id);
+	  			ps.setObject(++col, column.hasNumericContent);
+	  			ps.setObject(++col, column.hasFloatContent);
+	  			ps.setObject(++col, column.minFValue);
+	  			ps.setObject(++col, column.maxFValue);
+	  			ps.setString(++col, column.minSValue);
+	  			ps.setString(++col, column.maxSValue);
+	  			ps.setObject(++col, column.integerUniqueCount);
+	  			ps.setObject(++col, column.movingMean);
+	  			ps.setObject(++col, column.standardDeviation);
+	  			ps.setLong(++col, column.id);
+	  			ps.setLong(++col, column.id);
 	  			ps.executeUpdate();
 	  		}
 		  	conn.commit();
 	  	}
-		    
-	  
 	}
 	
 }
