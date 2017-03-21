@@ -537,7 +537,10 @@ where workflow_id = 66 and parent_column_info_id = 947
 				}
 				pairStatistics(longOf(parsedArgs.getProperty("wid")), params,parsedArgs);
 				*/
-				calculateDumpStats(new Long(92));
+				List<Long> ids = getTableIdList(longOf(parsedArgs.getProperty("wid")),longOf(parsedArgs.getProperty("mid")),longOf(parsedArgs.getProperty("tid")));
+				for (Long id:ids) {
+					calculateDumpStats(id,parsedArgs.getProperty("basedir","./"));;
+				}
 				System.out.println("Done.");
 			} else if ("x".equals(command)) {
 				initH2(parsedArgs.getProperty("url"), parsedArgs.getProperty("uid"), parsedArgs.getProperty("pwd"));
@@ -603,6 +606,9 @@ where workflow_id = 66 and parent_column_info_id = 947
 			} else if ("--outfile".equals(args[index])) {
 				ok = ok || checkExistance(args, index);
 				result.put(args[index].substring(2), args[index + 1]);
+			} else if ("--basedir".equals(args[index])) {
+				ok = ok || checkExistance(args, index);
+				result.put(args[index].substring(2), args[index + 1]);
 			} else if ("--wid".equals(args[index])) {
 				ok = ok || checkExistance(args, index);
 				try {
@@ -612,6 +618,23 @@ where workflow_id = 66 and parent_column_info_id = 947
 					System.err.printf(" parameter %s does not have an integer value !\n", args[index]);
 					ok = false;
 				}
+			} else if ("--mid".equals(args[index])) {
+				ok = ok || checkExistance(args, index);
+				try {
+					longOf(args[index + 1]);
+					result.put(args[index].substring(2), args[index + 1]);
+				} catch (NumberFormatException e) {
+					System.err.printf(" parameter %s does not have an integer value !\n", args[index]);
+					ok = false;
+				}			} else if ("--tid".equals(args[index])) {
+				ok = ok || checkExistance(args, index);
+				try {
+					longOf(args[index + 1]);
+					result.put(args[index].substring(2), args[index + 1]);
+				} catch (NumberFormatException e) {
+					System.err.printf(" parameter %s does not have an integer value !\n", args[index]);
+					ok = false;
+				}				
 			} else if ("--bl".equals(args[index])) {
 				ok = ok || checkExistance(args, index);
 				try {
@@ -684,6 +707,8 @@ where workflow_id = 66 and parent_column_info_id = 947
 		System.out.println("   --uid <string>      : user id for ASTRA H2 DB");
 		System.out.println("   --pwd  <string>     : password for ASTRA H2 DB");
 		System.out.println("   --wid <integer>     : ASTRA workflow ID to process");
+		System.out.println("   --mid <integer>     : ASTRA metadata ID to process (stats)");
+		System.out.println("   --tid <integer>     : ASTRA table ID to process (stats)");
 		System.out.println("   --label <string>    : Label name for clustering");
 		System.out.println("   --bl <float>        : ASTRA Bitset confidence level of column pairs to be clustered");
 		System.out.println("   --ll <float>        : ASTRA Lucene confidence level of column pairs to be clustered");
@@ -691,6 +716,7 @@ where workflow_id = 66 and parent_column_info_id = 947
 		System.out.println("   --ts <float>        : Sweep of top values of columns to be clustered");
 		System.out.println("   --bucket <integer>  : Calculating data buckets with width of <integer>");
 		System.out.println("   --outfile <string>  : Output file name");
+		System.out.println("   --basedir <string>  : Astra base directory");
 		System.out.println();
 		System.out.println(" Examples:");
 		System.out.println();
@@ -1445,7 +1471,39 @@ where workflow_id = 66 and parent_column_info_id = 947
 
 
 
-
+ public static List<Long> getTableIdList(Long workflowId,Long metadataId,Long tableId) throws SQLException {
+	 List<Long> result = new ArrayList<>();
+	 if (workflowId == null && metadataId == null && tableId == null) {
+		 throw new RuntimeException("One of parameters: table id (-tid) or metadata id (-mid) or workflow id (-wid) has to be defined ");
+	 }
+	 if (workflowId != null) {
+		 try(PreparedStatement ps = conn.prepareStatement(
+		 "select distinct t.id from link l "
+		 + "  inner join column_info c on c.id in (l.parent_column_info_id,l.child_column_info_id)"
+		 + "  inner join table_info t on t.id = c.table_info_id "
+		 + " where workflow_id = ?")){
+			 ps.setLong(1, workflowId);
+			 try(ResultSet rs = ps.executeQuery()) {
+				 while(rs.next())
+					 result.add(rs.getLong(1));
+			 }
+		 }
+	 } else if (metadataId != null) {
+		 try(PreparedStatement ps = conn.prepareStatement(
+			 "select t.id from table_info t "
+			 + "  where t.metadata_id = ?")){
+			 ps.setLong(1, metadataId);
+			 try(ResultSet rs = ps.executeQuery()) {
+				 while(rs.next())
+					 result.add(rs.getLong(1));
+			 }
+		}
+		 
+	 }else if (tableId != null) {
+		 result.add(tableId);
+	 }
+	 return result;
+ }
 
 
 public static class NCBoundaries {
@@ -2031,29 +2089,36 @@ static void createNumericClustersV3(
 		return true;
 	}*/
 	
-	private static void calculateDumpStats(Long tableId) throws SQLException, FileNotFoundException, IOException {
+	private static void calculateDumpStats(Long tableId,String astraBasePath) throws SQLException, FileNotFoundException, IOException {
 		int maxIntegerValue = Integer.MAX_VALUE; 
-		LocalTime start = LocalTime.now();
+		//LocalTime start = LocalTime.now();
 
 		H2Repository repo = new H2Repository();
 		TableInfo table = repo.loadTable(tableId);
+		System.out.print("Processing ");
+		System.out.print(table.schemaName);
+		System.out.print(".");
+		System.out.print(table.tableName);
+		System.out.print("...");
 		table.columns = repo.loadTableColumns(tableId);
+		astraBasePath = astraBasePath.replaceAll("\"", "");
 		char lineDelimiter[] = new char[]{10};
 		char columnDelimiter[] = new char[]{31};
+		
 		int countColumn = table.columns.size();
 		try (Scanner lineScanner = new Scanner(new GZIPInputStream(
 					new BufferedInputStream(
 								new FileInputStream(
 										//"C:/home/data.253.4/data/100020/86/ORCL.CRA.LIABILITIES.dat"
-										"C:/home/data.151/"+table.pathToFile
-										),4096
+										astraBasePath+table.pathToFile
+										),10*1024
 								)
 					)
 				)) {
 			//s.useDelimiter(new String(delimiter));
 			lineScanner.useDelimiter(String.valueOf(lineDelimiter));
 			while (lineScanner.hasNext()) {
-				String line = lineScanner.next(); 
+				String line = lineScanner.next();
 				int columnIndex = -1;
 				try (Scanner columnScanner = new Scanner(line)) {
 					columnScanner.useDelimiter(String.valueOf(columnDelimiter));
@@ -2120,6 +2185,9 @@ static void createNumericClustersV3(
 						} else {
 							columnInfo.hasFloatContent = Boolean.TRUE;
 						}
+					}
+					if (countColumn != columnIndex+1) {
+						throw new RuntimeException(String.format("Column number mismatch (%d<->%d) for line: %s",countColumn,(columnIndex+1),line));
 					}
 				};
 				
@@ -2232,7 +2300,7 @@ static void createNumericClustersV3(
 			repo.saveColumnStats(column);
 			
 		}
-		System.out.println(Duration.between(start, LocalTime.now()).getSeconds());
+		System.out.println(" Done");
 	}
 	
 	/*

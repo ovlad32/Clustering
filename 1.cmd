@@ -1,0 +1,1 @@
+java -cp "lib/SparseBitSet-1.0.jar;lib/h2-1.4.192.jar" com.rokittech.ClusteringLaunch s
