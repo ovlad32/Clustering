@@ -2162,8 +2162,9 @@ static void createNumericClustersV3(
 						
 						if (numericColumnData - Math.ceil(numericColumnData) == 0 ) {
 							long longImage = Math.round(numericColumnData);
-							Long key = new Long(maxIntegerValue >> (4 * 8 - 1));
-							int value = (int) longImage & 0xFFFFFFFF; 
+							Long key = new Long(maxIntegerValue >> (4 * 8 - 1)); //4bytes minus 1bit for the sing
+							int value = (int) longImage & 0x7FFFFFFF; 
+							if (maxIntegerValue == value) continue;
 							SparseBitSet bs = null;
 							if (columnInfo.positiveBitsets == null) {
 								columnInfo.positiveBitsets = new TreeMap<>();
@@ -3412,7 +3413,7 @@ static void createNumericClustersV3(
 	  				+ " integer_unique_count,moving_mean,moving_stddev,"
 	  				+ " position_in_pk, total_in_pk) key(id) values("
 	  				+ " ?,?,?,"
-	  				+ " ?,?,?,?,"
+	  				+ " ?,?,substr(?,1,4000),substr(?,1,4000),"
 	  				+ " ?,?,?,"
 	  				+ " (select cnc.position_in_constraint "
 	  				+ "    from constraint_column_info cnc"
