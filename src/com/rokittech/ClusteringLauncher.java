@@ -169,54 +169,7 @@ where workflow_id = 66 and parent_column_info_id = 947
 		    + "      ((ci.min_val < t.upperbound and ci.max_val > t.lowerbound) and rownum <= 1) "                  
 		    + "     ) ";			
 			
-			/*+ " select  "
-			+ " 	distinct  "
-			+ " 	t.column_info_id, "
-			+ " 	t.workflow_id, "
-			+ " 	t.cluster_number, "
-			+ " 	t.cluster_label    " 
-			+ " 	from ( "
-			+ "        select " 
-			+ "          c.workflow_id      " 
-			+ "          , c.cluster_number    "   
-			+ "          , c.cluster_label "
-			+ "          , case when c.column_info_id = l.child_column_info_id then l.parent_column_info_id else l.child_column_info_id end as column_info_id "
-			+ "          , spn.lowerbound "
-			+ "          , spn.upperbound "
-			+ "      from (select           "
-			+ "            cast(? as varchar(100)) as cluster_label "
-			+ "          , cast(? as bigint)   as workflow_id            "
-			+ "          , cast(? as bigint)  as cluster_number "
-			+ "          , cast(? as double) as bitset_level  "          
-			+ "          , cast(? as double) as lucene_level " 
-			+ "           ) p     "
-			+ "        left outer join link_clustered_column spn "
-			+ "          on spn.workflow_id = p.workflow_id "
-			+ "         and spn.cluster_number = p.cluster_number      "
-			+ "         and spn.cluster_label = p.cluster_label "
-			+ "         and spn.upperbound is not null "
-			+ "        inner join link_clustered_column c   "    
-			+ "          on c.workflow_id = p.workflow_id "
-			+ "         and c.cluster_number = p.cluster_number      "
-			+ "         and c.cluster_label = p.cluster_label "
-			+ "        inner join link l      "
-			+ "         on l.workflow_id =  c.workflow_id "
-			+ "        and c.column_info_id in (l.parent_column_info_id, l.child_column_info_id) "
-			+ "  where (l.bit_set_exact_similarity >= p.bitset_level or p.bitset_level is null) "
-			+ "    and (l.lucine_sample_term_similarity >= p.lucene_level or p.lucene_level is null) "
-			+ " ) t  "
-			+ "   left outer join link_clustered_column c    "  
-			+ "     on c.COLUMN_INFO_ID = t.column_info_id "
-			+ "     and c.workflow_id  = t.workflow_id     "
-			+ "     and c.cluster_label = t.cluster_label " 
-			+ "  left outer join column_info ci  "
-			+ "      on ci.id = t.column_info_id "
-			+ "  left outer join COLUMN_NUMERIC_REAL_TYPE r " 
-			+ "     on r.real_type = ci.real_type "
-			+ " where c.column_info_id is null "
-			+ "  and (r.real_type is null or t.upperbound is null or cast(ci.min_val as double) < t.upperbound )";
-  **/
-
+			
 	static final String deleteClusteredColumn = "delete from link_clustered_column c\n" + " where c.workflow_id = ?\n"
 			+ "   and c.cluster_label = ?";
 
@@ -506,12 +459,13 @@ where workflow_id = 66 and parent_column_info_id = 947
 				deleteClusters(parsedArgs.getProperty("label"), longOf(parsedArgs.getProperty("wid")));
 
 				
-				createNumericClustersV3(parsedArgs.getProperty("label"), longOf(parsedArgs.getProperty("wid")),
+				createClustersV3(parsedArgs.getProperty("label"), longOf(parsedArgs.getProperty("wid")),
 						floatOf(parsedArgs.getProperty("bl")), 
 						floatOf(parsedArgs.getProperty("ll")),
 						floatOf(parsedArgs.getProperty("rl")),
 						floatOf(parsedArgs.getProperty("ts")),
 						parsedArgs.getProperty("diffdb"),
+						parsedArgs.getProperty("contenttype"),
 						parsedArgs.getProperty("linktable")
 						);
 				if (parsedArgs.containsKey("outfile")) {
@@ -617,6 +571,9 @@ where workflow_id = 66 and parent_column_info_id = 947
 			} else if ("--linktable".equals(args[index])) {
 				ok = ok || checkExistance(args, index);
 				result.put(args[index].substring(2), args[index + 1]);
+			} else if ("--contenttype".equals(args[index])) {
+				ok = ok || checkExistance(args, index);
+				result.put(args[index].substring(2), args[index + 1]);
 			} else if ("--wid".equals(args[index])) {
 				ok = ok || checkExistance(args, index);
 				try {
@@ -711,22 +668,23 @@ where workflow_id = 66 and parent_column_info_id = 947
 		System.out.println("   s : Caluclating statistics");
 		System.out.println();
 		System.out.println(" parameters: ");
-		System.out.println("   --url  <string>     : URL to ASTRA H2 DB");
-		System.out.println("   --uid <string>      : user id for ASTRA H2 DB");
-		System.out.println("   --pwd  <string>     : password for ASTRA H2 DB");
-		System.out.println("   --wid <integer>     : ASTRA workflow ID to process");
-		System.out.println("   --mid <integer>     : ASTRA metadata ID to process (stats)");
-		System.out.println("   --tid <integer>     : ASTRA table ID to process (stats)");
-		System.out.println("   --label <string>    : Label name for clustering");
-		System.out.println("   --bl <float>        : ASTRA Bitset confidence level of column pairs to be clustered");
-		System.out.println("   --ll <float>        : ASTRA Lucene confidence level of column pairs to be clustered");
-		System.out.println("   --rl <float>        : Limit of initial pair range reduction");
-		System.out.println("   --ts <float>        : Sweep of top values of columns to be clustered");
-		System.out.println("   --diffdb <Y/N>      : Distinguish columns by database");
-		System.out.println("   --linktable <string>: Alternative Astra LINK table name  ");
-		System.out.println("   --bucket <integer>  : Calculating data buckets with width of <integer>");
-		System.out.println("   --outfile <string>  : Output file name");
-		System.out.println("   --basedir <string>  : Astra base directory");
+		System.out.println("   --url  <string>      : URL to ASTRA H2 DB");
+		System.out.println("   --uid <string>       : user id for ASTRA H2 DB");
+		System.out.println("   --pwd  <string>      : password for ASTRA H2 DB");
+		System.out.println("   --wid <integer>      : ASTRA workflow ID to process");
+		System.out.println("   --mid <integer>      : ASTRA metadata ID to process (stats)");
+		System.out.println("   --tid <integer>      : ASTRA table ID to process (stats)");
+		System.out.println("   --label <string>     : Label name for clustering");
+		System.out.println("   --bl <float>         : ASTRA Bitset confidence level of column pairs to be clustered");
+		System.out.println("   --ll <float>         : ASTRA Lucene confidence level of column pairs to be clustered");
+		System.out.println("   --rl <float>         : Limit of initial pair range reduction");
+		System.out.println("   --ts <float>         : Sweep of top values of columns to be clustered");
+		System.out.println("   --diffdb <Y/N>       : Distinguish columns by database");
+		System.out.println("   --linktable <string> : Alternative Astra LINK table name  ");
+		System.out.println("   --contenttype <A/N/S>: Content type to cluster:A-All;N-Numeric;S-String");
+		System.out.println("   --bucket <integer>   : Calculating data buckets with width of <integer>");
+		System.out.println("   --outfile <string>   : Output file name");
+		System.out.println("   --basedir <string>   : Astra base directory");
 		System.out.println();
 		System.out.println(" Examples:");
 		System.out.println();
@@ -1662,7 +1620,7 @@ public static class NCColumn {
 
 
 
-static void nc$initializeWorkingTables(
+static void acInitializeWorkingTables(
 			Long workflowId,
 			String clusterLabel,
 			Float bitsetLevel,
@@ -1670,7 +1628,7 @@ static void nc$initializeWorkingTables(
 			Float rangeLimit,
 			Float topSweep,
 			String diffDb,
-			String altLinkTable
+			String contentType
 			) throws SQLException{
 	
 	if (clusterLabel == null || clusterLabel.isEmpty()) {
@@ -1685,21 +1643,22 @@ static void nc$initializeWorkingTables(
 		throw new RuntimeException("Error: Neither Bitset nor Lucene confidence level has not been specified!");
 	}
 
-	execSQL("drop table if exists t$link");
 	execSQL("drop table if exists t$column");
 	execSQL("drop table if exists t$queue");
 	execSQL("drop table if exists t$param");
+	execSQL("drop table if exists s$column");
 	
 	try(PreparedStatement ps = conn.prepareStatement(
 			"create  "+getWorkingTableModifierString()+" table t$param as "
 			+ "select "
 			+ "  cast(? as bigint) workflow_id "
 			+ ", cast(? as varchar(100)) as cluster_label "
-			+ ", cast(? as double) as bitset_level "
-			+ ", cast(? as double) as lucene_level "
-			+ ", cast(? as double) as range_limit "
-			+ ", cast(? as double) as top_sweep "
-			+ ", cast(? as char(1)) as diff_db)"
+			+ ", cast(? as decimal(10,5)) as bitset_level "
+			+ ", cast(? as decimal(10,5)) as lucene_level "
+			+ ", cast(? as decimal(10,5)) as range_limit "
+			+ ", cast(? as decimal(10,5)) as top_sweep "
+			+ ", cast(? as char(1)) as diff_db"
+			+ ", cast(? as char(1)) as content_type"
 			)){
 		ps.setLong(1, workflowId);
 		ps.setString(2, clusterLabel);
@@ -1708,12 +1667,38 @@ static void nc$initializeWorkingTables(
 		ps.setObject(5, rangeLimit);
 		ps.setObject(6, topSweep);
 		ps.setObject(7, diffDb);
+		ps.setObject(8, contentType);
 		ps.execute();
 	};
 
+	execSQL("create  "+getWorkingTableModifierString()+" table t$queue ("
+			+ "column_id bigint primary key "
+			+ ",column_db_id bigint "
+			+ ",min_val double, max_val double"
+			+ ",excluded boolean default false)");
+
+	execSQL("create  "+getWorkingTableModifierString()+" table t$column ("
+			+ "column_id bigint "
+			+ ",cluster_number bigint "
+			+ ",processing_order bigint "
+			+ ",initial_range double "
+			+ ",lower_bound double, upper_bound double "
+			+ ",constraint t$column_pk primary key(column_id,cluster_number))");
+
 	
-	try(PreparedStatement ps = conn.prepareStatement(
-			"create  "+getWorkingTableModifierString()+" table t$link as "
+	execSQL("create  "+getWorkingTableModifierString()+" table s$column ("
+			+ "column_id bigint "
+			+ ",column_db_id bigint "
+			+ ",cluster_number bigint "
+			+ ",processing_order bigint "
+			+ ",constraint s$column_pk primary key(column_id,cluster_number))");
+}
+
+static void ncPopulateLinkTable(String altLinkTable) throws SQLException {
+	
+	execSQL("drop table if exists t$link");
+	
+	execSQL("create "+getWorkingTableModifierString()+" table t$link as "
 					+ " select "
 					+ "   l.id  as link_id , "
 					+ "   l.bit_set_exact_similarity as bitset_level, "
@@ -1728,45 +1713,65 @@ static void nc$initializeWorkingTables(
 					+ "   ci.max_val as child_max_val,"
 					+ "	  greatest(pi.min_val, ci.min_val) as link_min, "
 					+ "	  least(pi.max_val,ci.max_val) as link_max "
-					+ "	 from "+altLinkTable+" l "
+					+ "	 from t$param p"
+					+ "      inner join "+altLinkTable+" l on l.workflow_id = p.workflow_id "
 					+ "	     inner join column_info_numeric_range_view ci on ci.id = l.child_column_info_id "
 					+ "      inner join table_info tci on tci.id = ci.table_info_id "
 					+ "      inner join metadata mci on mci.id = tci.metadata_id "
 					+ "	     inner join column_info_numeric_range_view pi on pi.id = l.parent_column_info_id "
 					+ "      inner join table_info tpi on tpi.id = pi.table_info_id "
 					+ "      inner join metadata mpi on mpi.id = tpi.metadata_id "
-					+ "   inner join t$param p"
-					+ "    on ((l.bit_set_exact_similarity >= p.bitset_level or p.bitset_level is null) or "
-					+ "        (l.lucine_sample_term_similarity >= p.lucene_level or p.lucene_level is null)) "
-					+ "	   where pi.min_val is not null "
+					+ "	   where p.content_type in ('A','N')"
+					+ "      and ((l.bit_set_exact_similarity >= p.bitset_level or p.bitset_level is null) or "
+					+ "           (l.lucine_sample_term_similarity >= p.lucene_level or p.lucene_level is null) ) "
+					+ "      and pi.min_val is not null "
 					+ "      and pi.max_val is not null "
 					+ "      and ci.min_val is not null "
 					+ "      and ci.max_val is not null "
-					+ "      and l.workflow_id = ?  ")){
-		ps.setLong(1, workflowId);
-		ps.execute();
-	}
+					+ "      and ci.has_numeric_content = true "
+					+ "      and pi.has_numeric_content = true ");
+					
+	
 
 	execSQL("create hash index t$link_parent_id on t$link(parent_id)");
 	execSQL("create hash index t$link_child_id on t$link(child_id)");
 	
-	execSQL("create  "+getWorkingTableModifierString()+" table t$queue ("
-			+ "column_id bigint primary key "
-			+ ",column_db_id bigint "
-			+ ",min_val double, max_val double"
-			+ ",excluded boolean default false)");
 
-	execSQL("create  "+getWorkingTableModifierString()+" table t$column ("
-			+ "column_id bigint "
-			+ ",cluster_number bigint "
-			+ ",processing_order bigint "
-			+ ",initial_range double "
-			+ ",lower_bound double,upper_bound double "
-			+ ",constraint t$column_pk primary key(column_id,cluster_number))");
-	
-	
-	conn.setAutoCommit(true);
 }
+
+static void scPopulateLinkTable(String altLinkTable) throws SQLException {
+		
+		execSQL("drop table if exists s$link");
+		
+		execSQL("create "+getWorkingTableModifierString()+" table s$link as "
+				+ "  select  "
+				+ "   l.id  as link_id , "
+				+ "   l.bit_set_exact_similarity as bitset_level, "
+				+ "   l.lucine_sample_term_similarity as  lucene_level, "
+				+ "   l.parent_column_info_id as parent_id, "
+				+ "   l.child_column_info_id as child_id, "
+				+ "   mpi.database_config_id as parent_db_id,"
+				+ "   mci.database_config_id as child_db_id"
+				+ "	 from t$param p"
+				+ "      inner join "+altLinkTable+" l on l.workflow_id = p.workflow_id "
+				+ "	     inner join column_info ci on ci.id = l.child_column_info_id "
+				+ "      inner join table_info tci on tci.id = ci.table_info_id "
+				+ "      inner join metadata mci on mci.id = tci.metadata_id "
+				+ "	     inner join column_info pi on pi.id = l.parent_column_info_id "
+				+ "      inner join table_info tpi on tpi.id = pi.table_info_id "
+				+ "      inner join metadata mpi on mpi.id = tpi.metadata_id "
+				+ "	   where p.content_type in ('A','S') "
+				+ "      and ((l.bit_set_exact_similarity >= p.bitset_level or p.bitset_level is null) or "
+				+ "           (l.lucine_sample_term_similarity >= p.lucene_level or p.lucene_level is null)) "
+				+ "      and not exists (select 'Y' from t$column tc where tc.column_id = l.parent_column_info_id) "
+				+ "      and not exists (select 'Y' from t$column tc where tc.column_id = l.child_column_info_id) ");
+		
+		execSQL("create hash index s$link_parent_id on s$link(parent_id)");
+		execSQL("create hash index s$link_child_id on s$link(child_id)");
+		
+}
+
+
 
 static void nc$populateLinkedColumns(NCColumn column) throws SQLException{
 	try (PreparedStatement ps = conn.prepareStatement(
@@ -1811,6 +1816,7 @@ static void nc$populateLinkedColumns(NCColumn column) throws SQLException{
 		}
 	}
 }
+
 
 static NCColumn nc$fetchMostUbiquitousColumn() throws SQLException {
 	//TODO: PAIRS > 1 !!!
@@ -1870,14 +1876,19 @@ static NCColumn nc$fetchMostUbiquitousColumn() throws SQLException {
 	}
 }
 
-static void createNumericClustersV3(
+
+
+
+
+static void createClustersV3(
 		String clusterLabel, 
 		Long workflowId, 
 		Float bitsetLevel, 
 		Float luceneLevel,
 		Float rangeLimitFloat,
 		Float topSweep,
-		String diffDb, 
+		String diffDb,
+		String contentType,
 		String altLinkTable
 		) throws SQLException {
 
@@ -1890,15 +1901,21 @@ static void createNumericClustersV3(
 	if (altLinkTable == null || altLinkTable.trim().isEmpty()) {
 		altLinkTable = "link";
 	}
-	nc$initializeWorkingTables(workflowId,clusterLabel,bitsetLevel,luceneLevel,rangeLimit.floatValue(),topSweep,diffDb.toUpperCase().trim(),altLinkTable);
+	if (contentType == null || contentType.isEmpty() ){
+		contentType = "A";
+	}
 	
-	
+	conn.setAutoCommit(true);
 
+	
+	
+	acInitializeWorkingTables(workflowId,clusterLabel,bitsetLevel,luceneLevel,rangeLimit.floatValue(),topSweep,diffDb.toUpperCase().trim(),contentType);
+
+	ncPopulateLinkTable(altLinkTable);
+	
 	NCColumn leadingColumn = null;
 	while (true) {
 		
-		//Queue<Long> leadingColumnIds = new LinkedList<>();
-		//Queue<Long> drivenColumnIds = null;
 		leadingColumn = nc$fetchMostUbiquitousColumn();
 		if (leadingColumn == null) {
 			break;
@@ -1990,10 +2007,128 @@ static void createNumericClustersV3(
 			
 	}
 	
+	
+	
+	
+	scPopulateLinkTable(altLinkTable);
+	
+	
+	String initialQuery =
+			 "		    select "
+			+ "		         count(*) as pairs "  
+			+ "		        ,l.parent_id as column_id"
+			+ "             ,l.parent_db_id as column_db_id"
+			+ "		      from s$link  l  "
+			+ "		       left outer join s$column sc "
+			+ "		           on sc.column_id  =  l.child_id "
+			+ "		       left outer join t$column tc "
+			+ "		           on tc.column_id  =  l.child_id "
+			+ "		      where sc.column_id is null "
+			+ "             and tc.column_id is null " 
+			+ "		     group by l.parent_id,l.parent_db_id "
+			+ "		     having count(*) >0  "
+			+ "         union"
+			+ "		    select "
+			+ "		         count(*) as pairs "  
+			+ "		        ,l.child_id as column_id"
+			+ "             ,l.child_db_id as column_db_id"
+			+ "		      from s$link  l  "
+			+ "		       left outer join s$column sc "
+			+ "		           on sc.column_id  =  l.parent_id "
+			+ "		       left outer join t$column tc "
+			+ "		           on tc.column_id  =  l.parent_id "
+			+ "		      where sc.column_id is null "
+			+ "             and tc.column_id is null " 
+			+ "		     group by l.child_id,l.child_db_id "
+			+ "		     having count(*) >0  "
+			+ "		     order by 1 desc "; 
+			
+	
+
+	String workingInsert = "insert into s$column(column_id,column_db_id,cluster_number,processing_order)"
+			+ " select "
+		 	+ "     r.column_id "
+		 	+ "     ,r.column_db_id"
+		 	+ "     ,n.cluster_number"
+		 	+ "     ,n.last_processing_order+rownum  as processing_order"
+		 	+ "  from (select "
+		 	+ "			 cluster_number "
+		 	+ "			 ,max(processing_order) as last_processing_order "
+		 	+ "        from s$column "
+		 	+ "        where cluster_number = ? "
+		 	+ "        group by cluster_number "
+		 	+ "    ) n "
+		 	+ " cross join ("
+		 	+ "  select "
+		 	+ "    distinct "
+		 	+ "     ri.column_id, "
+		 	+ "     ri.column_db_id "
+		 	+ "  from ("
+		    + "    select "
+		    + "       l.child_id as column_id"
+		    + "       ,l.child_db_id as column_db_id"
+		    + "    from s$column sc "
+		    + "     cross join t$param p "
+		    + "     inner join s$link l      "
+		    + "       on sc.column_id = l.parent_id "
+		    + "    where (sc.column_db_id <> l.child_db_id or p.diff_db = 'Y') "
+		    + "   union "
+		    + "     select  "
+		    + "       l.parent_id as column_id"
+		    + "       ,l.parent_db_id as column_db_id"
+		    + "    from s$column sc "
+		    + "     cross join t$param p "
+		    + "     inner join s$link l      "
+		    + "       on sc.column_id = l.child_id "
+		    + "    where (sc.column_db_id <> l.parent_db_id or p.diff_db = 'Y') "
+		    + "   ) ri "
+		    + "   left outer join s$column sc "
+		    + "      on sc.column_id =  ri.column_id "
+		    + "   left outer join t$column tc "
+		    + "      on tc.column_id = ri.column_id "
+		    + "   where tc.column_id is null and sc.column_id is null"
+		    + " ) r ";			
+	  
+	String insertSColumn = "insert into s$column(column_id,column_db_id,cluster_number,processing_order) values (?,?,?,?)";
+	   
+	
+	
+	
+	try (PreparedStatement initialPS = conn.prepareStatement(initialQuery);
+			PreparedStatement insertPS = conn.prepareStatement(insertSColumn); 
+			PreparedStatement workingPS = conn.prepareStatement(workingInsert)){
+		for (;;) {
+			try (ResultSet rs = initialPS.executeQuery()) {
+				if (!rs.next()) {
+					break;
+				}
+				clusterNumber++;
+				insertPS.setObject(1,rs.getObject("column_id"));
+				insertPS.setObject(2,rs.getObject("column_db_id"));
+				insertPS.setLong(3,clusterNumber);
+				insertPS.setLong(4,1);
+			}
+			insertPS.executeUpdate();
+			for (;;) {
+				workingPS.setLong(1, clusterNumber);
+				if (workingPS.executeUpdate() == 0) {
+					break;
+				}
+			}
+		}
+	}
+	
+	
+	//merge string clusters and numeric clusters
+	execSQL("merge into t$column (column_id,cluster_number,processing_order) "
+			+ " key(column_id,cluster_number) "
+			+ " select t.column_id,t.cluster_number,t.processing_order from s$column t");
+	
 	execSQL("delete from link_clustered_column c "
 			+ " where (c.workflow_id,c.cluster_label) = ("
 			+ "  select p.workflow_id,p.cluster_label from t$param p "
 			+ ")");
+
 	
  
 	//Reoredering cluster numbers and saving collected columns
@@ -2024,6 +2159,7 @@ static void createNumericClustersV3(
 						+ "    on t.cluster_number = i.cluster_number " 
 						+ " ");
 	}
+	
 	if(updated) {
 		execSQL("merge into link_clustered_column_param ( "
 				+ " workflow_id "
@@ -2040,10 +2176,13 @@ static void createNumericClustersV3(
 				);
 		conn.commit();
 	}
-	conn.rollback();
+	conn.rollback();;
 		
 	
 }
+
+
+
 
 
 
