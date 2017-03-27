@@ -487,7 +487,7 @@ where workflow_id = 66 and parent_column_info_id = 947
 	*/
 	public static void main(String[] args) throws SQLException {
 		
-		
+
 		try {
 
 			Properties parsedArgs = parseCommandLine(args);
@@ -510,7 +510,9 @@ where workflow_id = 66 and parent_column_info_id = 947
 						floatOf(parsedArgs.getProperty("bl")), 
 						floatOf(parsedArgs.getProperty("ll")),
 						floatOf(parsedArgs.getProperty("rl")),
-						floatOf(parsedArgs.getProperty("ts"))
+						floatOf(parsedArgs.getProperty("ts")),
+						parsedArgs.getProperty("diffdb"),
+						parsedArgs.getProperty("linktable")
 						);
 				if (parsedArgs.containsKey("outfile")) {
 					reportClusters(parsedArgs.getProperty("label"), longOf(parsedArgs.getProperty("wid")),
@@ -607,6 +609,12 @@ where workflow_id = 66 and parent_column_info_id = 947
 				ok = ok || checkExistance(args, index);
 				result.put(args[index].substring(2), args[index + 1]);
 			} else if ("--basedir".equals(args[index])) {
+				ok = ok || checkExistance(args, index);
+				result.put(args[index].substring(2), args[index + 1]);
+			} else if ("--diffdb".equals(args[index])) {
+				ok = ok || checkExistance(args, index);
+				result.put(args[index].substring(2), args[index + 1]);
+			} else if ("--linktable".equals(args[index])) {
 				ok = ok || checkExistance(args, index);
 				result.put(args[index].substring(2), args[index + 1]);
 			} else if ("--wid".equals(args[index])) {
@@ -714,6 +722,8 @@ where workflow_id = 66 and parent_column_info_id = 947
 		System.out.println("   --ll <float>        : ASTRA Lucene confidence level of column pairs to be clustered");
 		System.out.println("   --rl <float>        : Limit of initial pair range reduction");
 		System.out.println("   --ts <float>        : Sweep of top values of columns to be clustered");
+		System.out.println("   --diffdb <Y/N>      : Distinguish columns by database");
+		System.out.println("   --linktable <string>: Alternative Astra LINK table name  ");
 		System.out.println("   --bucket <integer>  : Calculating data buckets with width of <integer>");
 		System.out.println("   --outfile <string>  : Output file name");
 		System.out.println("   --basedir <string>  : Astra base directory");
@@ -1658,7 +1668,10 @@ static void nc$initializeWorkingTables(
 			Float bitsetLevel,
 			Float luceneLevel,
 			Float rangeLimit,
-			Float topSweep) throws SQLException{
+			Float topSweep,
+			String diffDb,
+			String altLinkTable
+			) throws SQLException{
 	
 	if (clusterLabel == null || clusterLabel.isEmpty()) {
 		throw new RuntimeException("Error: Cluster Label has not been specified!");
@@ -1686,6 +1699,7 @@ static void nc$initializeWorkingTables(
 			+ ", cast(? as double) as lucene_level "
 			+ ", cast(? as double) as range_limit "
 			+ ", cast(? as double) as top_sweep "
+			+ ", cast(? as char(1)) as diff_db)"
 			)){
 		ps.setLong(1, workflowId);
 		ps.setString(2, clusterLabel);
@@ -1693,6 +1707,7 @@ static void nc$initializeWorkingTables(
 		ps.setObject(4, luceneLevel);
 		ps.setObject(5, rangeLimit);
 		ps.setObject(6, topSweep);
+		ps.setObject(7, diffDb);
 		ps.execute();
 	};
 
@@ -1713,7 +1728,7 @@ static void nc$initializeWorkingTables(
 					+ "   ci.max_val as child_max_val,"
 					+ "	  greatest(pi.min_val, ci.min_val) as link_min, "
 					+ "	  least(pi.max_val,ci.max_val) as link_max "
-					+ "	 from link l "
+					+ "	 from "+altLinkTable+" l "
 					+ "	     inner join column_info_numeric_range_view ci on ci.id = l.child_column_info_id "
 					+ "      inner join table_info tci on tci.id = ci.table_info_id "
 					+ "      inner join metadata mci on mci.id = tci.metadata_id "
@@ -1798,6 +1813,7 @@ static void nc$populateLinkedColumns(NCColumn column) throws SQLException{
 }
 
 static NCColumn nc$fetchMostUbiquitousColumn() throws SQLException {
+	//TODO: PAIRS > 1 !!!
 	
 	try(Statement ps = conn.createStatement();
 				ResultSet rs = ps.executeQuery(
@@ -1817,8 +1833,9 @@ static NCColumn nc$fetchMostUbiquitousColumn() throws SQLException {
 				+ "    and (p.top_sweep is null or "
 				+ "      abs(l.parent_max_val - l.child_max_val) / "
 				+ "        greatest(abs(l.parent_max_val-l.parent_min_val),abs(l.child_max_val-l.child_min_val)) ) < p.top_sweep "
+				+ "    and greatest(abs(l.parent_max_val-l.parent_min_val),abs(l.child_max_val-l.child_min_val)) > 0"
 				+ "    group by l.parent_id,l.parent_db_id,l.parent_min_val, l.parent_max_val "
-				+ "    having pairs > 1"
+				+ "    having pairs > 0"
 				+ "  union "
 				+ "	 select l.child_id as column_id "
 				+ "    ,l.child_db_id as column_db_id  "
@@ -1834,8 +1851,9 @@ static NCColumn nc$fetchMostUbiquitousColumn() throws SQLException {
 				+ "    and (p.top_sweep is null or "
 				+ "      abs(l.parent_max_val - l.child_max_val) / "
 				+ "        greatest(abs(l.parent_max_val-l.parent_min_val),abs(l.child_max_val-l.child_min_val)) ) < p.top_sweep "
+				+ "    and greatest(abs(l.parent_max_val-l.parent_min_val),abs(l.child_max_val-l.child_min_val)) > 0"
 				+ "   group by l.child_id,l.child_db_id,l.child_min_val, l.child_max_val "
-				+ "   having pairs > 1"
+				+ "   having pairs > 0"
 				+ ")  order by range_val desc, pairs desc"
 				)){
 		if (!rs.next()) 
@@ -1858,14 +1876,21 @@ static void createNumericClustersV3(
 		Float bitsetLevel, 
 		Float luceneLevel,
 		Float rangeLimitFloat,
-		Float topSweep
+		Float topSweep,
+		String diffDb, 
+		String altLinkTable
 		) throws SQLException {
 
 	long clusterNumber = 0;
 	BigDecimal rangeLimit = new BigDecimal(rangeLimitFloat.floatValue());
 	rangeLimit.setScale(5, RoundingMode.FLOOR);
-	
-	nc$initializeWorkingTables(workflowId,clusterLabel,bitsetLevel,luceneLevel,rangeLimit.floatValue(),topSweep);
+	if (diffDb == null || diffDb.trim().isEmpty()) {
+		diffDb = "N";
+	}
+	if (altLinkTable == null || altLinkTable.trim().isEmpty()) {
+		altLinkTable = "link";
+	}
+	nc$initializeWorkingTables(workflowId,clusterLabel,bitsetLevel,luceneLevel,rangeLimit.floatValue(),topSweep,diffDb.toUpperCase().trim(),altLinkTable);
 	
 	
 
@@ -1911,7 +1936,7 @@ static void createNumericClustersV3(
 						+ " left outer join t$column c "
 						+ "     on c.column_id = t.column_id "
 						+ " where t.excluded = false "
-						+ "    and q.leading_column_db_id <> t.column_db_id"
+						+ "    and (q.leading_column_db_id <> t.column_db_id or p.diff_db = 'Y')"
 						+ "    and c.column_id is null"
 						+ "    and (p.top_sweep is null or "
 						+ "       abs(t.max_val - q.top_max_val) / "
@@ -2126,7 +2151,7 @@ static void createNumericClustersV3(
 						columnIndex ++;
 						String stringColumnData = columnScanner.next();
 						if (stringColumnData == null || stringColumnData.isEmpty()) continue;
-						ColumnInfo columnInfo = table.columns.get(columnIndex);
+						ColumnInfo columnInfo = table.columns.get(columnIndex );
 						if (columnInfo.hasNumericContent == null) columnInfo.hasNumericContent = Boolean.FALSE;
 						
 						
@@ -2157,13 +2182,19 @@ static void createNumericClustersV3(
 							columnInfo.auxMinFValue = Double.min(columnInfo.auxMinFValue , numericColumnData);
 							columnInfo.auxMaxFValue = Double.max(columnInfo.auxMaxFValue , numericColumnData);
 						}
+						numericColumnData = ((double)120_000_000_000L)*(Math.random()-.5);
 						boolean positive = numericColumnData>=0;
+						
 						numericColumnData = Math.abs(numericColumnData);
 						
 						if (numericColumnData - Math.ceil(numericColumnData) == 0 ) {
+							System.out.println(numericColumnData);
+
 							long longImage = Math.round(numericColumnData);
-							Long key = new Long(maxIntegerValue >> (4 * 8 - 1));
-							int value = (int) longImage & 0xFFFFFFFF; 
+							Long key = new Long(longImage >> (4 * 8 - 1));
+							if (key>0) 
+								System.out.println(key);
+							int value = (int) longImage & 0x7FFFFFFF; 
 							SparseBitSet bs = null;
 							if (columnInfo.positiveBitsets == null) {
 								columnInfo.positiveBitsets = new TreeMap<>();
@@ -2186,8 +2217,8 @@ static void createNumericClustersV3(
 							columnInfo.hasFloatContent = Boolean.TRUE;
 						}
 					}
-					if (countColumn != columnIndex+1) {
-						throw new RuntimeException(String.format("Column number mismatch (%d<->%d) for line: %s",countColumn,(columnIndex+1),line));
+					if (countColumn < columnIndex+1) {
+						throw new RuntimeException(String.format("Column number mismatch (%d<->%d) for line #d : %s",countColumn,(columnIndex+1),line));
 					}
 				};
 				
@@ -3412,7 +3443,7 @@ static void createNumericClustersV3(
 	  				+ " integer_unique_count,moving_mean,moving_stddev,"
 	  				+ " position_in_pk, total_in_pk) key(id) values("
 	  				+ " ?,?,?,"
-	  				+ " ?,?,?,?,"
+	  				+ " ?,?,substr(?,1,4000),substr(?,1,4000),"
 	  				+ " ?,?,?,"
 	  				+ " (select cnc.position_in_constraint "
 	  				+ "    from constraint_column_info cnc"
