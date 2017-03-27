@@ -2182,19 +2182,17 @@ static void createNumericClustersV3(
 							columnInfo.auxMinFValue = Double.min(columnInfo.auxMinFValue , numericColumnData);
 							columnInfo.auxMaxFValue = Double.max(columnInfo.auxMaxFValue , numericColumnData);
 						}
-						numericColumnData = ((double)120_000_000_000L)*(Math.random()-.5);
 						boolean positive = numericColumnData>=0;
 						
 						numericColumnData = Math.abs(numericColumnData);
 						
 						if (numericColumnData - Math.ceil(numericColumnData) == 0 ) {
-							System.out.println(numericColumnData);
 
 							long longImage = Math.round(numericColumnData);
-							Long key = new Long(longImage >> (4 * 8 - 1));
-							if (key>0) 
-								System.out.println(key);
+							Long key = new Long(longImage >> (4 * 8 - 1)); //4bytes minus 1bit for the sing
 							int value = (int) longImage & 0x7FFFFFFF; 
+							if (maxIntegerValue == value) continue;
+
 							SparseBitSet bs = null;
 							if (columnInfo.positiveBitsets == null) {
 								columnInfo.positiveBitsets = new TreeMap<>();
