@@ -63,9 +63,14 @@ where workflow_id = 66 and parent_column_info_id = 947
 */
 	
 	private static final String clusteredColumnTableDefinition = "create table if not exists link_clustered_column(\n"
-			+ " column_info_id bigint not null \n" + " ,workflow_id   bigint not null \n"
-			+ " ,cluster_number    integer not null \n" + " ,cluster_label varchar(100) not null \n"
+			+ " column_info_id bigint not null \n" 
+			+ " ,workflow_id   bigint not null \n"
+			+ " ,cluster_number    integer not null \n" 
+			+ " ,cluster_type    char(1)\n" 
+			+ " ,cluster_label varchar(100) not null \n"
 			+ " ,processing_order bigint"
+			+ " ,pass_number bigint"
+			+ " ,leading_column_info_id bigint"
 			+ " ,constraint link_clustered_col_pk primary key (column_info_id, workflow_id, cluster_number, cluster_label)\n"
 			+ ")";
 
@@ -815,24 +820,30 @@ public static class NCColumn {
 		}
 	}
 	
-	boolean saveAsClustered(Long clusterNumber,Long processingOrder, NCBoundaries boundaries ) {
+	boolean saveAsClustered(Long clusterNumber,long processingOrder, long passNumber,NCBoundaries boundaries,Long leadingId ) {
 		boolean result;
 		try(PreparedStatement psu = conn.prepareStatement(
-				"merge into t$column(column_id"
+				"merge into t$column("
+				+ "cluster_type"
+				+ ",column_id"
 				+ ",cluster_number"
 				+ ",processing_order"
+				+ ",pass_number"
+				+ ",leading_column_id"
 				+ ",initial_range"
 				+ ",lower_bound"
 				+ ",upper_bound"
 				+ ") key (column_id,cluster_number) "
-				+" values(?,?,?,?,?,?)")) {
-
-		psu.setLong(1, this.id);
-		psu.setLong(2, clusterNumber);
-		psu.setLong(3, processingOrder);
-		psu.setBigDecimal(4, boundaries.initialRange);
-		psu.setBigDecimal(5, boundaries.lower);
-		psu.setBigDecimal(6, boundaries.upper);
+				+" values('N',?,?,?,?,?,?,?,?)")) {
+		int index =0;
+		psu.setLong(++index, this.id);
+		psu.setLong(++index, clusterNumber);
+		psu.setLong(++index, processingOrder);
+		psu.setLong(++index, passNumber);
+		psu.setObject(++index, leadingId);
+		psu.setBigDecimal(++index, boundaries.initialRange);
+		psu.setBigDecimal(++index, boundaries.lower);
+		psu.setBigDecimal(++index, boundaries.upper);
 		result = psu.executeUpdate()>0; 
 		} catch(SQLException e) {
 			throw new RuntimeException(String.format("Exception while saving clustered column column_id=%d",this.id),e);
@@ -924,18 +935,25 @@ static void acInitializeWorkingTables(
 
 	execSQL("create  "+getWorkingTableModifierString()+" table t$column ("
 			+ "column_id bigint "
+			+ ",cluster_type char(1)"
 			+ ",cluster_number bigint "
 			+ ",processing_order bigint "
+			+ ",pass_number bigint "
+			+ ",leading_column_id bigint"
 			+ ",initial_range double "
-			+ ",lower_bound double, upper_bound double "
+			+ ",lower_bound double "
+			+ ",upper_bound double "
 			+ ",constraint t$column_pk primary key(column_id,cluster_number))");
 
 	
 	execSQL("create  "+getWorkingTableModifierString()+" table s$column ("
 			+ "column_id bigint "
 			+ ",column_db_id bigint "
+			+ ",cluster_type char(1)"
 			+ ",cluster_number bigint "
 			+ ",processing_order bigint "
+			+ ",pass_number bigint "
+			+ ",leading_column_id bigint"
 			+ ",constraint s$column_pk primary key(column_id,cluster_number))");
 }
 
@@ -1154,6 +1172,7 @@ static void acInitializeWorkingTables(
 			) throws SQLException {
 	
 		long clusterNumber = 0;
+		long passNumber = 0;
 		BigDecimal rangeLimit = new BigDecimal(rangeLimitFloat.floatValue());
 		rangeLimit = rangeLimit.setScale(5, RoundingMode.FLOOR);
 		
@@ -1182,7 +1201,6 @@ static void acInitializeWorkingTables(
 		
 		NCColumn leadingColumn = null;
 		while (true) {
-			
 			leadingColumn = nc$fetchMostUbiquitousColumn();
 			if (leadingColumn == null) {
 				break;
@@ -1195,7 +1213,7 @@ static void acInitializeWorkingTables(
 			clusterBoundaries.upper = leadingColumn.maxValue;
 			clusterBoundaries.initialRange = leadingColumn.maxValue.subtract(leadingColumn.minValue);
 			long processingOrder = 0;
-			leadingColumn.saveAsClustered( ++clusterNumber, ++processingOrder, clusterBoundaries);
+			leadingColumn.saveAsClustered( ++clusterNumber, ++processingOrder, ++passNumber, clusterBoundaries,null);
 			try(PreparedStatement pst = conn.prepareStatement(
 							" select "
 							+ "  t.column_id "
@@ -1271,7 +1289,7 @@ static void acInitializeWorkingTables(
 						 //!!Here is the place where transitive link filter happens
 						if (column.isFit(clusterBoundaries)) {
 							column.shorten(clusterBoundaries);
-							column.saveAsClustered(clusterNumber, ++processingOrder, clusterBoundaries);
+							column.saveAsClustered(clusterNumber, ++processingOrder, passNumber, clusterBoundaries,leadingColumn.id);
 						}
 					}
 				}
@@ -1313,56 +1331,73 @@ static void acInitializeWorkingTables(
 				+ "		      where sc.column_id is null "
 				+ "             and tc.column_id is null " 
 				+ "		     group by l.child_id,l.child_db_id "
-				+ "		     having count(*) >0  "
-				+ "		     order by 1 desc "; 
+				+ "		     having count(*) >0 "
+				+ "		     order by 1 desc,column_id asc "; 
 				
 		
 	
-		String workingInsert = "insert into s$column(column_id,column_db_id,cluster_number,processing_order)"
+		String workingInsert = "insert into s$column(column_id,column_db_id, cluster_type,cluster_number,processing_order,pass_number,leading_column_id)"
 				+ " select "
 			 	+ "     r.column_id "
 			 	+ "     ,r.column_db_id"
+			 	+ "     ,'S'"
 			 	+ "     ,n.cluster_number"
-			 	+ "     ,n.last_processing_order+rownum  as processing_order"
+			 	+ "     ,n.last_processing_order + rownum  as processing_order"
+			 	+ "     ,n.pass_number"
+			 	+ "     ,r.leading_column_id"
 			 	+ "  from (select "
 			 	+ "			 cluster_number "
-			 	+ "			 ,max(processing_order) as last_processing_order "
+			 	+ "			 ,min(processing_order) as last_processing_order "
+			 	+ "          ,cast(? as bigint) as pass_number"
 			 	+ "        from s$column "
 			 	+ "        where cluster_number = ? "
 			 	+ "        group by cluster_number "
 			 	+ "    ) n "
 			 	+ " cross join ("
 			 	+ "  select "
-			 	+ "    distinct "
-			 	+ "     ri.column_id, "
-			 	+ "     ri.column_db_id "
+			 	+ "     ri.column_id "
+			 	+ "     ,ri.column_db_id"
+			 	+ "     ,max(ri.leading_column_id) as leading_column_id"
 			 	+ "  from ("
 			    + "    select "
 			    + "       l.child_id as column_id"
 			    + "       ,l.child_db_id as column_db_id"
+			    + "       ,l.parent_id as leading_column_id"
 			    + "    from s$column sc "
 			    + "     cross join t$param p "
-			    + "     inner join s$link l      "
+			    + "     inner join s$link l "
 			    + "       on sc.column_id = l.parent_id "
+			    + "     inner join s$link lb on lb.parent_id = l.child_id and lb.child_id = l.parent_id"
+			    + "     inner join column_info cp on cp.id = l.parent_id"
+			    + "     inner join column_info cc on cc.id = l.child_id"
 			    + "    where (sc.column_db_id <> l.child_db_id or p.diff_db = 'Y') "
+			    + "      and cp.max_sval>=cc.min_sval"
 			    + "   union "
 			    + "     select  "
 			    + "       l.parent_id as column_id"
 			    + "       ,l.parent_db_id as column_db_id"
+			    + "       ,l.child_id as leading_column_id"
 			    + "    from s$column sc "
 			    + "     cross join t$param p "
 			    + "     inner join s$link l      "
-			    + "       on sc.column_id = l.child_id "
+			    + "       on sc.column_id = l.child_id"
+			    + "     inner join s$link lb on lb.parent_id = l.child_id and lb.child_id = l.parent_id"
+			    + "     inner join column_info cp on cp.id = l.parent_id"
+			    + "     inner join column_info cc on cc.id = l.child_id"
 			    + "    where (sc.column_db_id <> l.parent_db_id or p.diff_db = 'Y') "
+			    + "      and cc.max_sval>=cp.min_sval"
 			    + "   ) ri "
 			    + "   left outer join s$column sc "
 			    + "      on sc.column_id =  ri.column_id "
 			    + "   left outer join t$column tc "
 			    + "      on tc.column_id = ri.column_id "
 			    + "   where tc.column_id is null and sc.column_id is null"
-			    + " ) r ";			
+			    + "   group by ri.column_id, ri.column_db_id "
+			    + " ) r order by 1"; //for the 			
 		  
-		String insertSColumn = "insert into s$column(column_id,column_db_id,cluster_number,processing_order) values (?,?,?,?)";
+		String insertSColumn = 
+				"insert into s$column(cluster_type,column_id,column_db_id,cluster_number,processing_order,pass_number) "
+				+ "  values ('S',?,?,?,?,?)";
 		   
 		
 		
@@ -1376,15 +1411,22 @@ static void acInitializeWorkingTables(
 						break;
 					}
 					clusterNumber++;
+					passNumber = 1;
 					insertPS.setObject(1,rs.getObject("column_id"));
 					insertPS.setObject(2,rs.getObject("column_db_id"));
 					insertPS.setLong(3,clusterNumber);
 					insertPS.setLong(4,1);
+					insertPS.setLong(5,passNumber);
 				}
 				insertPS.executeUpdate();
 				for (;;) {
-					workingPS.setLong(1, clusterNumber);
+					passNumber ++;
+					workingPS.setLong(1, passNumber);
+					workingPS.setLong(2, clusterNumber);
 					if (workingPS.executeUpdate() == 0) {
+						break;
+					}
+					if (diffDb.equals("Y")) {
 						break;
 					}
 				}
@@ -1393,9 +1435,9 @@ static void acInitializeWorkingTables(
 		
 		
 		//merge string clusters and numeric clusters
-		execSQL("merge into t$column (column_id,cluster_number,processing_order) "
+		execSQL("merge into t$column (column_id,cluster_number,cluster_type,processing_order,pass_number,leading_column_id) "
 				+ " key(column_id,cluster_number) "
-				+ " select t.column_id,t.cluster_number,t.processing_order from s$column t");
+				+ " select t.column_id,t.cluster_number,cluster_type,t.processing_order,pass_number,leading_column_id from s$column t");
 		
 		execSQL("delete from link_clustered_column c "
 				+ " where (c.workflow_id,c.cluster_label) = ("
@@ -1408,13 +1450,16 @@ static void acInitializeWorkingTables(
 		boolean updated = false; 
 		try(Statement ps = conn.createStatement()){
 			updated = 0 != ps.executeUpdate(	
-					"insert into link_clustered_column(workflow_id, cluster_label, column_info_id,cluster_number,processing_order) "
+					"insert into link_clustered_column(workflow_id, cluster_label, column_info_id,cluster_number,cluster_type,processing_order,pass_number,leading_column_info_id) "
 							+ " direct "
 							+ " select p.workflow_id "
 							+ "       ,p.cluster_label "
 							+ "       ,t.column_id "
 							+ "       ,i.renumbered_cluster_number"
+							+ "       ,cluster_type"
 							+ "       ,t.processing_order "
+							+ "       ,t.pass_number "
+							+ "       ,t.leading_column_id"
 							+ "    from t$param p"
 							+ "    cross join ("
 							+ "       select "
