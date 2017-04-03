@@ -766,6 +766,7 @@ public static class NCColumn {
 	private Long dbId;
 	private BigDecimal minValue;
 	private BigDecimal maxValue;
+	private BigDecimal uniqueCount,totalCount;
 	
 	
 	@Override
@@ -792,7 +793,11 @@ public static class NCColumn {
 			return false;
 		return true;
 	}
-	private void init(Long id, Long dbId, BigDecimal minValue, BigDecimal maxValue) {
+
+	public NCColumn(Long id, Long dbId, 
+			BigDecimal minValue, 
+			BigDecimal maxValue
+			) {
 		if (id == null) {
 			throw new NullPointerException("ColumnId is null!");
 		}
@@ -810,15 +815,13 @@ public static class NCColumn {
 		this.dbId = dbId;
 		this.minValue = minValue;
 		this.maxValue = maxValue;
+		this.uniqueCount = uniqueCount;
+		this.totalCount = totalCount;
 	}
 		
-	NCColumn(Long id, Long dbId, BigDecimal minValue, BigDecimal maxValue) {
-		super();
-		init(id,dbId,minValue,maxValue);
-	}
 	
 	
-	NCColumn(Long id) throws SQLException {
+	/*NCColumn(Long id) throws SQLException {
 		if (id == null) {
 			throw new NullPointerException("ColumnId is null!");
 		}
@@ -838,7 +841,7 @@ public static class NCColumn {
 					}
 				}
 			}
-	}
+	} */
 	
 	void saveToQueue() throws SQLException{
 		try(PreparedStatement ps = conn.prepareStatement(
@@ -973,11 +976,16 @@ static void acInitializeWorkingTables(
 	execSQL("create  "+getWorkingTableModifierString()+" table t$queue ("
 			+ "column_id bigint primary key "
 			+ ",column_db_id bigint "
-			+ ",min_val double, max_val double"
+			+ ",min_val double "
+			+ ",max_val double "
+			+ ",unique_count bigint "
+			+ ",total_count bigint "
 			+ ",excluded boolean default false)");
 
 	execSQL("create  "+getWorkingTableModifierString()+" table t$column ("
 			+ "column_id bigint "
+			+ ",unique_count bigint"
+			+ ",total_count bigint"
 			+ ",cluster_type char(1)"
 			+ ",cluster_number bigint "
 			+ ",processing_order bigint "
@@ -999,12 +1007,6 @@ static void acInitializeWorkingTables(
 			+ ",processing_order bigint "
 			+ ",pass_number bigint "
 			+ ",leading_column_id bigint"
-			+ ",leading_unique_count_lowerbound double"
-			+ ",leading_unique_count_upperbound double"
-			+ ",leading_total_count_lowerbound double"
-			+ ",leading_total_count_upperbound double"
-			+ ",in_unique_count boolean"
-			+ ",in_total_count boolean"
 			+ ",constraint s$column_pk primary key(column_id,cluster_number))");
 }
 
@@ -1014,19 +1016,23 @@ static void acInitializeWorkingTables(
 		
 		execSQL("create "+getWorkingTableModifierString()+" table t$link as "
 						+ " select "
-						+ "   l.id  as link_id , "
-						+ "   l.bit_set_exact_similarity as bitset_level, "
-						+ "   l.lucine_sample_term_similarity as  lucene_level, "
-						+ "   l.parent_column_info_id as parent_id, "
-						+ "   l.child_column_info_id as child_id, "
-						+ "   mpi.database_config_id as parent_db_id,"
-						+ "   mci.database_config_id as child_db_id,"
-						+ "   pi.min_val as parent_min_val,"
-						+ "   pi.max_val as parent_max_val,"
-						+ "   ci.min_val as child_min_val,"
-						+ "   ci.max_val as child_max_val,"
-						+ "	  greatest(pi.min_val, ci.min_val) as link_min, "
-						+ "	  least(pi.max_val,ci.max_val) as link_max "
+						+ "   l.id  as link_id  "
+						+ "   ,l.bit_set_exact_similarity as bitset_level  "
+						+ "   ,l.lucine_sample_term_similarity as  lucene_level  "
+						+ "   ,l.parent_column_info_id as parent_id  "
+						+ "   ,l.child_column_info_id as child_id  "
+						+ "   ,mpi.database_config_id as parent_db_id "
+						+ "   ,mci.database_config_id as child_db_id "
+						+ "   ,pi.min_val as parent_min_val "
+						+ "   ,pi.max_val as parent_max_val "
+						+ "   ,ci.min_val as child_min_val "
+						+ "   ,ci.max_val as child_max_val "
+						+ "	  ,greatest(pi.min_val, ci.min_val) as link_min "
+						+ "	  ,least(pi.max_val,ci.max_val) as link_max "
+						+ "   ,pi.unique_count as parent_unique_count"
+						+ "   ,ci.unique_count as child_unique_count"
+						+ "   ,pi.total_count as parent_total_count"
+						+ "   ,ci.total_count as child_total_count"
 						+ "	 from t$param p"
 						+ "      inner join "+altLinkTable+" l on l.workflow_id = p.workflow_id "
 						+ "	     inner join column_info_numeric_range_view ci on ci.id = l.child_column_info_id "
@@ -1036,8 +1042,8 @@ static void acInitializeWorkingTables(
 						+ "      inner join table_info tpi on tpi.id = pi.table_info_id "
 						+ "      inner join metadata mpi on mpi.id = tpi.metadata_id "
 						+ "	   where p.content_type in ('A','N')"
-						+ "      and ((l.bit_set_exact_similarity >= p.bitset_level or p.bitset_level is null) or "
-						+ "           (l.lucine_sample_term_similarity >= p.lucene_level or p.lucene_level is null) ) "
+						+ "      and (l.bit_set_exact_similarity >= p.bitset_level or p.bitset_level is null)"
+						+ "      and (l.lucine_sample_term_similarity >= p.lucene_level or p.lucene_level is null) "
 						+ "      and pi.min_val is not null "
 						+ "      and pi.max_val is not null "
 						+ "      and ci.min_val is not null "
@@ -1079,8 +1085,8 @@ static void acInitializeWorkingTables(
 					+ "      inner join table_info tpi on tpi.id = pi.table_info_id "
 					+ "      inner join metadata mpi on mpi.id = tpi.metadata_id "
 					+ "	   where p.content_type in ('A','S') "
-					+ "      and ((l.bit_set_exact_similarity >= p.bitset_level or p.bitset_level is null) or "
-					+ "           (l.lucine_sample_term_similarity >= p.lucene_level or p.lucene_level is null)) "
+					+ "      and (l.bit_set_exact_similarity >= p.bitset_level or p.bitset_level is null) "
+					+ "      and (l.lucine_sample_term_similarity >= p.lucene_level or p.lucene_level is null) "
 					//+ "      and not exists (select 'Y' from t$column tc where tc.column_id = l.parent_column_info_id) "
 					//+ "      and not exists (select 'Y' from t$column tc where tc.column_id = l.child_column_info_id) "
 					+ "      and nvl(ci.has_numeric_content,false) = false "
@@ -1113,8 +1119,8 @@ static void acInitializeWorkingTables(
 		
 		while(true) {
 			try(PreparedStatement ps = conn.prepareStatement(
-						" insert into t$queue(column_id, column_db_id, min_val, max_val) "
-						+ " select c.id, t.column_db_id, c.min_val,c.max_val "
+						" insert into t$queue(column_id, column_db_id, min_val, max_val, unique_count, total_count) "
+						+ " select c.id, t.column_db_id, c.min_val,c.max_val, c.unique_count, c.total_count "
 						+ " from ( "
 						+ " select "
 						+ "  t.child_id  as column_id"
@@ -1143,7 +1149,7 @@ static void acInitializeWorkingTables(
 		
 		try(Statement ps = conn.createStatement();
 					ResultSet rs = ps.executeQuery(
-					" select top 1 column_id, column_db_id,min_val, max_val, range_val, pairs "
+					" select top 1 column_id, column_db_id,min_val, max_val, range_val, pairs,unique_count,total_count "
 					+ " from ("
 					+ "   select l.parent_id as column_id  "
 					+ "    ,l.parent_db_id as column_db_id  "
@@ -1151,6 +1157,8 @@ static void acInitializeWorkingTables(
 					+ "    ,l.parent_min_val as min_val "
 					+ "    ,l.parent_max_val as max_val "
 					+ "    ,l.parent_max_val - l.parent_min_val as range_val"
+					+ "    ,l.parent_unique_count as unique_count "
+					+ "    ,l.parent_total_count as total_count "
 					+ "  from t$link l "
 					+ "  cross join t$param p "
 					+ "  left outer join t$column cp "
@@ -1167,7 +1175,8 @@ static void acInitializeWorkingTables(
 					+ "                  greatest(abs(l.parent_max_val - l.parent_min_val),abs(l.child_max_val - l.child_min_val))  < p.top_sweep "
 					+ "                  then 'Y' end"
 					+ "           end "
-					+ "    group by l.parent_id,l.parent_db_id,l.parent_min_val, l.parent_max_val "
+					+ "    group by l.parent_id,l.parent_db_id,l.parent_min_val, l.parent_max_val"
+					+ "       ,l.parent_unique_count,l.parent_total_count "
 					+ "    having pairs > 0"
 					+ "  union "
 					+ "	 select l.child_id as column_id "
@@ -1176,6 +1185,8 @@ static void acInitializeWorkingTables(
 					+ "    ,l.child_min_val as min_val "
 					+ "    ,l.child_max_val as max_val "
 					+ "    ,l.child_max_val - l.child_min_val as range_val "
+					+ "    ,l.child_unique_count as unique_count "
+					+ "    ,l.child_total_count as total_count "
 					+ "  from t$link l "
 					+ "  cross join t$param p "
 					+ "  left outer join t$column cc "
@@ -1193,6 +1204,7 @@ static void acInitializeWorkingTables(
 					+ "                  then 'Y' end"
 					+ "           end "
 					+ "   group by l.child_id,l.child_db_id,l.child_min_val, l.child_max_val "
+					+ "       ,l.child_unique_count,l.child_total_count "
 					+ "   having pairs > 0"
 					+ ")  order by range_val desc, pairs desc"
 					)){
@@ -1205,6 +1217,8 @@ static void acInitializeWorkingTables(
 						rs.getBigDecimal("min_val"),
 						rs.getBigDecimal("max_val")
 						);
+				result.uniqueCount= rs.getBigDecimal("unique_count");
+				result.totalCount = rs.getBigDecimal("total_count");
 				return result;
 			}
 		}
@@ -1279,12 +1293,13 @@ static void acInitializeWorkingTables(
 							+ "  t.column_id "
 							+ "  ,t.column_db_id "
 							+ "  ,cc.name "
+							
 							+ "  ,least(q.boundary_max_val, t.max_val)  "
 							+ "    - greatest(q.boundary_min_val, t.min_val) as range_val "
+							
+							//+ "  ,t.max_val - t.min_val as range_val "
 							+ "  ,t.min_val "
 							+ "  ,t.max_val "
-							+ "  ,abs(t.max_val - q.top_max_val) / "
-							+ "        greatest(abs(t.max_val - t.min_val),abs(q.top_max_val - q.top_min_val)) top_sweep"
 							+ " from t$queue t "
 							+ "  cross join (select "
 							+ "   cast(? as double) as boundary_min_val"
@@ -1292,13 +1307,21 @@ static void acInitializeWorkingTables(
 							+ "   ,cast(? as double) as leading_column_db_id"
 							+ "   ,cast(? as double) as top_min_val"
 							+ "   ,cast(? as double) as top_max_val"
+							+ "   ,cast(? as bigint) as leading_unique_count"
+							+ "   ,cast(? as bigint) as leading_total_count"
 							+ "  ) q "
 							+ " cross join t$param p "
 							+ "  inner join column_info cc on cc.id = t.column_id"
-							+ " left outer join t$column c "
+							+ "  left outer join t$column c "
 							+ "     on c.column_id = t.column_id "
 							+ " where t.excluded = false "
 							+ "    and (q.leading_column_db_id <> t.column_db_id or p.diff_db = 'Y')"
+						    + "   /* and (p.unique_count_sweep is null or "
+						 	+ "         t.unique_count between (q.leading_unique_count - q.leading_unique_count*p.unique_count_sweep) "
+						 	+ "                            and (q.leading_unique_count + q.leading_unique_count*p.unique_count_sweep) ) "
+						 	+ "    and (p.total_count_sweep is null  or "
+						 	+ "         t.total_count between (q.leading_total_count - q.leading_total_count*p.total_count_sweep) "
+						 	+ "                           and (q.leading_total_count + q.leading_total_count*p.total_count_sweep) ) */"
 							+ "    and c.column_id is null"
 							+ "    and 'Y' = case "
 							+ "        when p.top_sweep is null then 'Y' "
@@ -1309,11 +1332,14 @@ static void acInitializeWorkingTables(
 							+ "          then 'Y' end"
 							+ "        end"
 							+ " order by c.column_id nulls first, range_val desc "))	{
-				pst.setBigDecimal(1, clusterBoundaries.lower);
-				pst.setBigDecimal(2, clusterBoundaries.upper);
-				pst.setLong(3, leadingColumn.dbId);
-				pst.setBigDecimal(4, leadingColumn.minValue);
-				pst.setBigDecimal(5, leadingColumn.maxValue);
+				int index = 0;
+				pst.setBigDecimal(++index, clusterBoundaries.lower);
+				pst.setBigDecimal(++index, clusterBoundaries.upper);
+				pst.setLong(++index, leadingColumn.dbId);
+				pst.setBigDecimal(++index, leadingColumn.minValue);
+				pst.setBigDecimal(++index, leadingColumn.minValue);
+				pst.setBigDecimal(++index, leadingColumn.uniqueCount);
+				pst.setBigDecimal(++index, leadingColumn.totalCount);
 				try (ResultSet rs = pst.executeQuery()){ 
 					while(rs.next()) {
 						BigDecimal currentRange = rs.getBigDecimal("range_val");
@@ -1369,8 +1395,6 @@ static void acInitializeWorkingTables(
 				+ "		         count(*) as pairs "  
 				+ "		        ,l.parent_id as column_id"
 				+ "             ,l.parent_db_id as column_db_id"
-				+ "             ,l.parent_unique_count as unique_count"
-				+ "             ,l.parent_total_count as total_count"
 				+ "		      from s$link  l "
 				+ "			   inner join s$link lb "
 				+ "                on lb.parent_id = l.child_id "
@@ -1382,15 +1406,12 @@ static void acInitializeWorkingTables(
 				+ "		      where sc.column_id is null "
 				+ "             and tc.column_id is null " 
 				+ "		     group by l.parent_id,l.parent_db_id"
-				+ "                   ,l.parent_unique_count,l.parent_total_count  "
 				+ "		     having count(*) >0  "
 				+ "         union"
 				+ "		    select "
 				+ "		         count(*) as pairs "  
 				+ "		        ,l.child_id as column_id"
 				+ "             ,l.child_db_id as column_db_id"
-				+ "             ,l.child_unique_count"
-				+ "             ,l.child_total_count"
 				+ "		      from s$link  l  "
 				+ "			   inner join s$link lb "
 				+ "                on lb.parent_id = l.child_id "
@@ -1402,7 +1423,6 @@ static void acInitializeWorkingTables(
 				+ "		      where sc.column_id is null "
 				+ "             and tc.column_id is null " 
 				+ "		     group by l.child_id,l.child_db_id "
-				+ "                  ,l.child_unique_count,l.child_total_count  "
 				+ "		     having count(*) >0 "
 				+ "		     order by 1,column_id asc "; 
 				
@@ -1416,13 +1436,7 @@ static void acInitializeWorkingTables(
 				+ " , processing_order"
 				+ " , pass_number"
 				+ " , leading_column_id"
-				+ " , leading_unique_count_lowerbound "
-				+ " , leading_unique_count_upperbound "
-				+ " , leading_total_count_lowerbound "
-				+ " , leading_total_count_upperbound "
-				+ " , in_unique_count"
-				+ " , in_total_count"
-				+ ") select * from (select  "
+				+ ") select  "
 			 	+ "     r.column_id "
 			 	+ "     ,r.column_db_id"
 			 	+ "     ,'S'"
@@ -1430,16 +1444,6 @@ static void acInitializeWorkingTables(
 			 	+ "     ,n.last_processing_order + rownum  as processing_order"
 			 	+ "     ,n.pass_number"
 			 	+ "     ,r.leading_column_id"
-			 	+ "     ,r.leading_unique_count - r.leading_unique_count*p.unique_count_sweep"
-			 	+ "     ,r.leading_unique_count + r.leading_unique_count*p.unique_count_sweep"
-			 	+ "     ,r.leading_total_count - r.leading_total_count*p.total_count_sweep"
-			 	+ "     ,r.leading_total_count + r.leading_total_count*p.total_count_sweep"
-			 	+ "     ,(r.unique_count  "
-			 	+ "             between (r.leading_unique_count - r.leading_unique_count*p.unique_count_sweep) "
-			 	+ "              and (r.leading_unique_count + r.leading_unique_count*p.unique_count_sweep) ) as in_unique_count"
-			 	+ "     ,(r.total_count  "
-			 	+ "             between (r.leading_total_count - r.leading_total_count*p.total_count_sweep) "
-			 	+ "              and (r.leading_total_count + r.leading_total_count*p.total_count_sweep) ) as in_total_count"
 			 	+ "  from (select "
 			 	+ "			 cluster_number "
 			 	+ "			 ,min(processing_order) as last_processing_order "
@@ -1453,20 +1457,12 @@ static void acInitializeWorkingTables(
 			 	+ "  select "
 			 	+ "     ri.column_id "
 			 	+ "     ,ri.column_db_id"
-			 	+ "     ,ri.unique_count"
-			 	+ "     ,ri.total_count"
-			 	+ "     ,ri.leading_column_id"
-			 	+ "     ,ri.leading_unique_count"
-			 	+ "     ,ri.leading_total_count"
+			 	+ "     ,ri.leading_column_id "
 			 	+ "  from ("
 			    + "    select "
 			    + "       l.child_id as column_id"
 			    + "       ,l.child_db_id as column_db_id"
-			    + "       ,l.child_unique_count as unique_count"
-			    + "       ,l.child_total_count as total_count"
 			    + "       ,l.parent_id as leading_column_id"
-			    + "       ,l.parent_unique_count as leading_unique_count"
-			    + "       ,l.parent_total_count as leading_total_count"
 			    + "    from s$column sc "
 			    + "     cross join t$param p "
 			    + "     inner join s$link l "
@@ -1476,16 +1472,18 @@ static void acInitializeWorkingTables(
 			    + "     inner join column_info cc on cc.id = l.child_id"
 			    + "    where (sc.column_db_id <> l.child_db_id or p.diff_db = 'Y') "
 			    + "      and cp.max_sval>=cc.min_sval"
+			    + "      and (p.unique_count_sweep is null or "
+			 	+ "           l.child_unique_count between (l.parent_unique_count - l.parent_unique_count*p.unique_count_sweep) "
+			 	+ "                                and (l.parent_unique_count + l.parent_unique_count*p.unique_count_sweep) ) "
+			 	+ "      and (p.total_count_sweep  or "
+			 	+ "           l.child_total_count between (l.parent_total_count - l.parent_total_count*p.total_count_sweep) "
+			 	+ "                               and (l.parent_total_count + l.parent_total_count*p.total_count_sweep) ) "
 			    + "      and l.parent_id = ?"
 			    + "   union "
 			    + "     select  "
 			    + "       l.parent_id as column_id"
 			    + "       ,l.parent_db_id as column_db_id"
-			    + "       ,l.parent_unique_count as unique_count"
-			    + "       ,l.parent_total_count as total_count"
 			    + "       ,l.child_id as leading_column_id"
-			    + "       ,l.child_unique_count as leading_unique_count"
-			    + "       ,l.child_total_count as leading_total_count"
 			    + "    from s$column sc "
 			    + "     cross join t$param p "
 			    + "     inner join s$link l      "
@@ -1495,6 +1493,12 @@ static void acInitializeWorkingTables(
 			    + "     inner join column_info cc on cc.id = l.child_id"
 			    + "    where (sc.column_db_id <> l.parent_db_id or p.diff_db = 'Y') "
 			    + "      and cc.max_sval>=cp.min_sval"
+			    + "      and (p.unique_count_sweep is null or "
+			 	+ "           l.parent_unique_count between (l.child_unique_count - l.child_unique_count*p.unique_count_sweep) "
+			 	+ "                                 and (l.child_unique_count + l.child_unique_count*p.unique_count_sweep) ) "
+			 	+ "      and (p.total_count_sweep  or "
+			 	+ "           l.parent_total_count between (l.child_total_count - l.child_total_count*p.total_count_sweep) "
+			 	+ "                                and (l.child_total_count + l.child_total_count*p.total_count_sweep) ) "
 			    + "      and l.child_id = ?"
 			    + "   ) ri "
 			    + "   left outer join s$column sc "
@@ -1502,17 +1506,11 @@ static void acInitializeWorkingTables(
 			    + "   left outer join t$column tc "
 			    + "      on tc.column_id = ri.column_id "
 			    + "   where tc.column_id is null and sc.column_id is null"
-			    + " ) r) where in_unique_count = true and in_total_count = true order by 1"; //for the 			
+			    + " ) r order by 1"; //for the 			
 		  
 		String insertSColumn = 
 				"insert into s$column(cluster_type,column_id,column_db_id"
-				+ ",cluster_number,processing_order,pass_number"
-				+ ",leading_unique_count_upperbound  "
-				+ ",leading_unique_count_lowerbound " 
-				+ ",leading_total_count_lowerbound " 
-				+ ",leading_total_count_upperbound " 
-				+ ",in_unique_count  "
-			    + ",in_total_count  ) "
+				+ ",cluster_number,processing_order,pass_number) "
 				+ "  select "
 				+ "   'S'"
 				+ "   ,cast(? as bigint) as column_id "
@@ -1520,18 +1518,7 @@ static void acInitializeWorkingTables(
 				+ "   ,cast(? as bigint) as cluster_number"
 				+ "   ,cast(? as bigint) as processing_order"
 				+ "   ,cast(? as bigint) as pass_number"
-				+ "   ,r.leading_unique_count - r.leading_unique_count*p.unique_count_sweep"
-			 	+ "   ,r.leading_unique_count + r.leading_unique_count*p.unique_count_sweep"
-			 	+ "   ,r.leading_total_count - r.leading_total_count*p.total_count_sweep"
-			 	+ "   ,r.leading_total_count + r.leading_total_count*p.total_count_sweep"
-			 	+ "   ,true "
-			 	+ "   ,true "
-			 	+ "   from t$param p"
-			 	+ "    cross join ("
-			 	+ "      select  "
-			 	+ "        cast(? as bigint) as leading_unique_count"
-			 	+ "        ,cast(? as bigint) as leading_total_count"
-			 	+ "     ) r";
+			 	+ "   from t$param p";
 			 	
 		   
 		
@@ -1554,8 +1541,6 @@ static void acInitializeWorkingTables(
 					insertPS.setLong(3,clusterNumber);
 					insertPS.setLong(4,1);
 					insertPS.setLong(5,passNumber);
-					insertPS.setObject(6,rs.getObject("unique_count"));
-					insertPS.setObject(7,rs.getObject("total_count"));
 				}
 				insertPS.executeUpdate();
 				for (;;) {
@@ -1599,12 +1584,6 @@ static void acInitializeWorkingTables(
 					+ ", processing_order"
 					+ ", pass_number"
 					+ ", leading_column_info_id"
-					+ ", leading_unique_count_lowerbound "
-					+ ", leading_unique_count_upperbound  "
-					+ ", leading_total_count_lowerbound  "
-					+ ", leading_total_count_upperbound " 
-					+ ", in_unique_count "
-					+ ", in_total_count "
 					+ ") "
 							+ " direct "
 							+ " select p.workflow_id "
@@ -1615,12 +1594,6 @@ static void acInitializeWorkingTables(
 							+ "       ,t.processing_order "
 							+ "       ,t.pass_number "
 							+ "       ,t.leading_column_id"
-							+ "       ,s.leading_unique_count_lowerbound "
-							+ "       ,s.leading_unique_count_upperbound  "
-							+ "       ,s.leading_total_count_lowerbound  "
-							+ "       ,s.leading_total_count_upperbound " 
-							+ "       ,s.in_unique_count "
-							+ "       ,s.in_total_count "
 							+ "    from t$param p"
 							+ "    cross join ("
 							+ "       select "
@@ -1636,9 +1609,6 @@ static void acInitializeWorkingTables(
 							+ "        ) i "
 							+ "       inner join t$column t "
 							+ "         on t.cluster_number = i.cluster_number "
-							+ "       left outer join s$column s "
-							+ "         on t.column_id = s.column_id " 
-							+ "         and t.cluster_number = s.cluster_number " 
 							+ " ");
 		}
 		
@@ -1651,25 +1621,6 @@ static void acInitializeWorkingTables(
 					);
 		}
 		
-		/*execSQL("update link_clustered_column t set ( "
-				+ "		leading_unique_count_lowerbound "
-				+ "		 ,leading_unique_count_upperbound  "
-				+ "		 ,leading_total_count_lowerbound  "
-				+ "		 ,leading_total_count_upperbound " 
-				+ "		 ,in_unique_count "
-				+ "		 ,in_total_count "
-				+ "		 ) = (select  "
-				+ "		 c.leading_unique_count_upperbound "
-				+ "		 ,c.leading_unique_count_lowerbound "
-				+ "		 ,c.leading_total_count_lowerbound "
-				+ "		 ,c.leading_total_count_upperbound " 
-				+ "		 ,c.in_unique_count "
-				+ "		 ,c.in_total_count "
-				+ "		 from s$column c where c.column_id = t.column_info_id " 
-				+ "		  and t.cluster_number = c.cluster_number) "
-				+ "where t.cluster_type = 'S' and "
-				+ "  (t.workflow_id, t.cluster_label) = "
-				+ "  (select  p.workflow_id  ,p.cluster_label from t$param p) ");*/
 		conn.commit();
 			
 		
@@ -2192,6 +2143,8 @@ static void acInitializeWorkingTables(
 		        + "  ,c.has_float_content "
 		        +"   ,c.min_fval as min_val "
 		        +"   ,c.max_fval as max_val "
+		        + "  ,nvl(c.unique_row_count,c.hash_unique_count) unique_count"
+		        + "  ,c.total_row_count as total_count"
 		        +" from public.column_info c "
 		        +" where c.min_fval is not null "
 		        +"   and c.max_fval is not null "
