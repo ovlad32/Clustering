@@ -1496,7 +1496,7 @@ static void acInitializeWorkingTables(
 			    + "      and (p.unique_count_sweep is null or "
 			 	+ "           l.parent_unique_count between (l.child_unique_count - l.child_unique_count*p.unique_count_sweep) "
 			 	+ "                                 and (l.child_unique_count + l.child_unique_count*p.unique_count_sweep) ) "
-			 	+ "      and (p.total_count_sweep  or "
+			 	+ "      and (p.total_count_sweep is null or "
 			 	+ "           l.parent_total_count between (l.child_total_count - l.child_total_count*p.total_count_sweep) "
 			 	+ "                                and (l.child_total_count + l.child_total_count*p.total_count_sweep) ) "
 			    + "      and l.child_id = ?"
